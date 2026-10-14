@@ -62,7 +62,7 @@ arrows, and per-post `[+]` expandos:
 1. Open the link above **in Firefox**.
 2. Click **Add to Firefox** → **Add**.
 3. Open any subreddit — e.g. `https://www.reddit.com/r/pics` — and it renders in the
-   classic layout. No Reddit account needed (logging in adds subreddit sidebars and
+   classic layout. No Reddit account needed (logging in adds old Reddit's own sidebars and
    rebuilt user/search pages — see [limitations](#experimental-rebuild-mode)).
 4. Manage it any time from the toolbar button (quick toggles) or
    `about:addons` → **Classic Layout for Reddit** → **Preferences** (all settings + filters).
@@ -116,7 +116,7 @@ One-click install, reviewed by Microsoft — it installs permanently and auto-up
 1. Open the link above **in Microsoft Edge**.
 2. Click **Get** → **Add extension**.
 3. Open any subreddit — e.g. `https://www.reddit.com/r/pics` — and it renders in the
-   classic layout. No Reddit account needed (logging in adds subreddit sidebars and
+   classic layout. No Reddit account needed (logging in adds old Reddit's own sidebars and
    rebuilt user/search pages — see [limitations](#experimental-rebuild-mode)).
 4. Manage it any time from the toolbar button (quick toggles) or
    `edge://extensions` → **Details** → **Extension options** (all settings + filters).
@@ -208,12 +208,14 @@ attributes) and maps it onto the JSON shape the renderer expects.
 **Honest limitations (please read):**
 
 - **Logged out works, with less.** Subreddit listings (every sort and time
-  filter), the front page, r/popular, and comment threads (including "load more
-  comments") all rebuild without an account. User profiles, search, wiki pages,
-  r/all, multireddits and combined `r/a+b` listings have no logged-out data source,
-  so those fall back to normal Reddit, and there's no subreddit sidebar. Anything
-  that fails **falls back** to letting normal Reddit render — it never leaves the
-  page blank.
+  filter, stickies on top), the front page, r/popular, and comment threads
+  (including "load more comments") all rebuild without an account, and v.redd.it
+  videos play inline with sound. The sidebar shows new Reddit's community widgets
+  (rules, bookmarks, …) rather than old Reddit's sidebar text, and stickies show
+  without a post time or author. User profiles, search, wiki pages, r/all,
+  multireddits and combined `r/a+b` listings have no logged-out data source, so
+  those fall back to normal Reddit. Anything that fails **falls back** to letting
+  normal Reddit render — it never leaves the page blank.
 - **Read-only.** Voting, saving, posting, and commenting are **not** wired up (they
   need an OAuth write token). The arrows/buttons render for looks but are inert.
 - **Listings, comments, user profiles, and search.** Post permalinks render old

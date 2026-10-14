@@ -37,12 +37,12 @@ log("listing native css left", await nativeCss());
 for (let i = 0; i < 6; i++) { await page.mouse.wheel(0, 6000); await page.waitForTimeout(1200); }
 await page.waitForTimeout(3000);
 log("after scroll things", await page.locator("#siteTable .thing.link").count());
-log("duplicate post ids", await page.evaluate(() => { const ids = Array.from(document.querySelectorAll("#siteTable .thing.link")).map((t) => t.id); return ids.length - new Set(ids).size; }));
+log("duplicate post ids", await page.evaluate(() => { const ids = Array.from(document.querySelectorAll("#siteTable .thing.link")).map((t) => t.id); const seen = new Set(), dup = []; ids.forEach((id, i) => { if (seen.has(id)) dup.push(id + "@" + i + (document.querySelectorAll("#" + id + ".stickied").length ? "(sticky)" : "")); seen.add(id); }); return dup.length ? dup : 0; }));
 await page.screenshot({ path: path.join(outDir, "1-listing.png") });
 
 // 2. in-page nav to a thread (pick a post with comments)
 await page.evaluate(() => window.scrollTo(0, 0));
-const link = page.locator("#siteTable .thing.link a.bylink.comments").first();
+const link = page.locator("#siteTable .thing.link:not(.stickied) a.bylink.comments").first(); // stickies may have 0 comments
 const href = await link.getAttribute("href");
 await link.click();
 await page.waitForSelector(".commentarea", { timeout: 30000 }).catch(() => {});

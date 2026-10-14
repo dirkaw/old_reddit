@@ -189,7 +189,7 @@
       const pu = posterOf(d) || posterOf(xp);
       const poster = pu ? ` poster="${esc(pu)}"` : "";
       return {
-        type: dashUrl ? "video" : "video-muted",
+        type: dashUrl || rv.orr_muxed ? "video" : "video-muted",
         html: `<div class="expando-container"><video class="reddit-video" controls preload="none"${poster}${audioAttr} width="${esc(rv.width || 640)}" height="${esc(rv.height || 360)}"><source src="${esc(rv.fallback_url)}" type="video/mp4"></video></div>`,
       };
     }
@@ -317,7 +317,7 @@
     const nsfwTag = d.over_18 ? ` <span class="linkflairlabel" style="background:#c00;color:#fff">NSFW</span>` : "";
 
     return (
-      `<div class="thing id-${esc(d.name)} ${oddeven} ${nsfw} link" id="thing_${esc(d.name)}"` +
+      `<div class="thing id-${esc(d.name)} ${oddeven} ${nsfw}${d.stickied ? " stickied" : ""} link" id="thing_${esc(d.name)}"` +
       ` data-fullname="${esc(d.name)}" data-permalink="${esc(permalink)}" data-subreddit="${esc(d.subreddit)}"` +
       ` data-author="${esc(d.author)}" data-domain="${esc(d.domain)}" data-nsfw="${d.over_18 ? "true" : "false"}"` +
       ` data-flair="${esc(flairText)}" data-score="${esc(typeof d.score === "number" ? d.score : "")}" data-created="${esc(d.created_utc || 0)}"` +
@@ -339,10 +339,14 @@
       flairHtml + spoilerTag + nsfwTag +
       ` <span class="domain">(<a href="/domain/${esc(d.domain)}/">${esc(d.domain)}</a>)</span>` +
       `</p>` +
-      `<p class="tagline">submitted <time datetime="${esc(iso)}">${esc(formatAge(d.created_utc, opts.nowMs))}</time>` +
-      ` by <a href="/user/${esc(d.author)}" class="author may-blank">${esc(d.author)}</a>` +
+      // (time/author can be unknown: a logged-out sticky comes from a highlight card that carries neither)
+      `<p class="tagline">${d.created_utc || d.author ? "submitted" : ""}` +
+      (d.created_utc ? ` <time datetime="${esc(iso)}">${esc(formatAge(d.created_utc, opts.nowMs))}</time>` : "") +
+      (d.author ? ` by <a href="/user/${esc(d.author)}" class="author may-blank">${esc(d.author)}</a>` : "") +
       flairSpan("flair", d.author_flair_text, d.author_flair_richtext, d.author_flair_background_color, d.author_flair_text_color) +
-      `${toSub}</p>` +
+      toSub +
+      (d.stickied ? `${d.created_utc || d.author || toSub ? " - " : ""}<span class="stickied-tagline" title="selected by this subreddit's moderators">announcement</span>` : "") +
+      `</p>` +
       `<ul class="flat-list buttons">` +
       `<li class="first"><a href="${esc(permalink)}" class="bylink comments may-blank">${comments}</a></li>` +
       `<li class="share"><a class="post-sharing-button" href="${esc(permalink)}">share</a></li>` +
@@ -556,6 +560,26 @@
       });
       html += "</ol></div></div></div>";
     }
+    return html;
+  }
+
+  // Logged-out sidebar, from new Reddit's right-rail widgets (railFromHtml).
+  // Section html is already allowlist-sanitized there. (From PR #28 by @dirkaw.)
+  function buildRailSidebar(rail) {
+    const dn = rail.name || "";
+    let html = '<div class="spacer"><div class="titlebox">';
+    html += `<h1 class="redditname"><a class="hover" href="/r/${esc(dn)}/">${esc(rail.prefixedName || "r/" + dn)}</a></h1>`;
+    if (rail.weeklyVisitors != null)
+      html += `<div class="subscribers"><span class="number">${formatNumber(rail.weeklyVisitors)}</span> <span class="word">weekly visitors</span></div>`;
+    if (rail.weeklyContributions != null)
+      html += `<div class="users-online"><span class="number">${formatNumber(rail.weeklyContributions)}</span> <span class="word">weekly contributions</span></div>`;
+    if (rail.description) html += `<div class="usertext-body"><div class="md"><p>${esc(rail.description)}</p></div></div>`;
+    html += "</div></div>";
+    (rail.sections || []).forEach((s) => {
+      html += '<div class="spacer"><div class="sidecontentbox">';
+      if (s.title) html += `<div class="title"><h1>${esc(s.title)}</h1></div>`;
+      html += `<div class="content"><div class="md">${s.html}</div></div></div></div>`;
+    });
     return html;
   }
 
@@ -988,6 +1012,7 @@
     meIdentity, userbarLoggedIn, userbarLoggedOut, srBarHtml, searchFormHtml, sideSearchHtml, buildHeader,
     searchJsonUrl, searchHref, buildSearchPage, buildWikiPage,
     parseHtmlDoc, cleanMd, isoToUtc, postFromShreddit, commentsFromHtml, htmlListingPath,
+    packagedMp4, stickiesFromHtml, railFromHtml, buildRailSidebar,
   };
 
   // ---------- runtime driver -------------------------------------------
@@ -3502,17 +3527,22 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   // markdown-ish tags and attributes, unwrapping everything else — so nothing from
   // the fetched page beyond plain formatting, links and images reaches our DOM.
   const MD_KEEP = { P: 1, BR: 1, HR: 1, A: 1, EM: 1, STRONG: 1, B: 1, I: 1, DEL: 1, S: 1, SUP: 1, SUB: 1, CODE: 1, PRE: 1, BLOCKQUOTE: 1, UL: 1, OL: 1, LI: 1, H1: 1, H2: 1, H3: 1, H4: 1, H5: 1, H6: 1, TABLE: 1, THEAD: 1, TBODY: 1, TR: 1, TH: 1, TD: 1, SPAN: 1, IMG: 1 };
-  const MD_DROP = { SCRIPT: 1, STYLE: 1, TEMPLATE: 1, IFRAME: 1, OBJECT: 1, EMBED: 1, SVG: 1, BUTTON: 1, INPUT: 1, FORM: 1, TEXTAREA: 1, SELECT: 1, NOSCRIPT: 1, LINK: 1, META: 1 };
+  // (screen-reader-only text would show up as stray visible text once unwrapped)
+  const MD_DROP = { SCRIPT: 1, STYLE: 1, TEMPLATE: 1, IFRAME: 1, OBJECT: 1, EMBED: 1, SVG: 1, BUTTON: 1, INPUT: 1, FORM: 1, TEXTAREA: 1, SELECT: 1, NOSCRIPT: 1, LINK: 1, META: 1, "FACEPLATE-SCREEN-READER-CONTENT": 1 };
   const MD_VOID = { BR: 1, HR: 1, IMG: 1 };
-  function cleanMd(node) {
+  // opts.headingsAsStrong: render h1/h2 as bold text (sidebar widgets title every rule with an h2)
+  function cleanMd(node, opts) {
     let out = "";
     if (!node) return out;
     node.childNodes.forEach((n) => {
       if (n.nodeType === 3) { out += esc(n.nodeValue); return; }
       if (n.nodeType !== 1) return;
-      const tag = n.tagName.toUpperCase();
+      let tag = n.tagName.toUpperCase();
       if (MD_DROP[tag]) return;
-      if (!MD_KEEP[tag]) { out += cleanMd(n); return; } // unknown wrapper → keep its contents
+      // new Reddit marks spoilers with a <spoiler-text> element; old reddit's CSS hides .md-spoiler-text
+      if (tag === "SPOILER-TEXT") { out += `<span class="md-spoiler-text">${cleanMd(n, opts)}</span>`; return; }
+      if (opts && opts.headingsAsStrong && (tag === "H1" || tag === "H2")) tag = "STRONG";
+      if (!MD_KEEP[tag]) { out += cleanMd(n, opts); return; } // unknown wrapper → keep its contents
       let attrs = "";
       if (tag === "A") {
         const href = n.getAttribute("href") || "";
@@ -3532,7 +3562,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         if (st && /^\d+$/.test(st)) attrs += ` start="${st}"`;
       }
       const t = tag.toLowerCase();
-      out += MD_VOID[tag] ? `<${t}${attrs}>` : `<${t}${attrs}>${cleanMd(n)}</${t}>`;
+      out += MD_VOID[tag] ? `<${t}${attrs}>` : `<${t}${attrs}>${cleanMd(n, opts)}</${t}>`;
     });
     return out;
   }
@@ -3560,6 +3590,26 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       if (m && +m[2] < bw) { bw = +m[2]; best = m[1]; }
     });
     return best || img.getAttribute("src") || img.getAttribute("data-lazy-src") || "";
+  }
+
+  // A <shreddit-player>'s packaged-media-json lists progressive MP4s (video+audio)
+  // on packaged-media.redd.it. Pick the largest that's at most 720p tall.
+  function packagedMp4(player) {
+    let perms = [];
+    try {
+      const pm = JSON.parse(player.getAttribute("packaged-media-json") || "null");
+      perms = (pm && pm.playbackMp4s && pm.playbackMp4s.permutations) || [];
+    } catch (e) {
+      return null;
+    }
+    const opts = perms
+      .map((p) => p && p.source)
+      .filter((s) => s && /^https:\/\/packaged-media\.redd\.it\//.test(s.url || ""))
+      .map((s) => ({ url: s.url, width: (s.dimensions && s.dimensions.width) || 0, height: (s.dimensions && s.dimensions.height) || 0 }))
+      .sort((a, b) => a.height - b.height);
+    if (!opts.length) return null;
+    const fit = opts.filter((o) => o.height && o.height <= 720);
+    return fit.length ? fit[fit.length - 1] : opts[0];
   }
 
   // One <shreddit-post> → the `data` object of a t3 in Reddit's JSON.
@@ -3609,7 +3659,14 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       const vm = /https:\/\/v\.redd\.it\/[A-Za-z0-9]+/.exec(player.getAttribute("src") || (player.querySelector("source") || { getAttribute: () => "" }).getAttribute("src") || href);
       const posterEl = player.querySelector("img[slot='poster']");
       const poster = (posterEl && posterEl.getAttribute("src")) || player.getAttribute("poster") || "";
-      if (vm) {
+      const mp4 = packagedMp4(player);
+      if (mp4) {
+        // Reddit's own signed, progressive MP4 with the audio muxed in: a plain
+        // <video> plays it with sound — no dash.js and no v.redd.it access needed
+        // (v.redd.it itself 403s us; see redditVideoReachable).
+        d.is_video = true;
+        d.media = { reddit_video: { fallback_url: mp4.url, width: mp4.width, height: mp4.height, has_audio: false, orr_muxed: true } };
+      } else if (vm) {
         d.is_video = true;
         d.media = { reddit_video: { fallback_url: vm[0] + "/CMAF_480.mp4?source=fallback", has_audio: true } };
       }
@@ -3650,6 +3707,78 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     return d;
   }
 
+  // A subreddit page's "community highlight" cards (its stickies) → t3 data. A card
+  // carries the title, permalink, vote/comment counts and sometimes a thumbnail or
+  // flair — no author or post time (buildItem leaves those out of the tagline).
+  // (Approach from PR #28 by @dirkaw.)
+  function stickiesFromHtml(doc) {
+    const out = [];
+    doc.querySelectorAll("community-highlight-card").forEach((card) => {
+      const m = /^highlight_card_(t3_[a-z0-9]+)$/i.exec(card.id || "");
+      const a = card.closest("a[href]");
+      const permalink = a ? a.getAttribute("href") || "" : "";
+      const titleEl = card.querySelector("[slot='title']");
+      const title = titleEl ? titleEl.textContent.replace(/\s+/g, " ").trim() : "";
+      if (!m || !title || !/^\/r\/[^/]+\/comments\//.test(permalink) || out.some((d) => d.name === m[1])) return;
+      const sub = (card.getAttribute("subreddit-prefixed-name") || "").replace(/^r\//i, "");
+      const nums = Array.from(card.querySelectorAll("[slot='upvotes-and-comments'] faceplate-number")).map((n) => parseInt(n.getAttribute("number"), 10));
+      const flair = card.querySelector("[slot='label'] [aria-label^='Flair:']");
+      const thumb = card.getAttribute("src") || "";
+      out.push({
+        name: m[1], id: m[1].slice(3), title, permalink, url: absUrl(permalink),
+        subreddit: sub, domain: "self." + sub, author: "", created_utc: 0,
+        score: isNaN(nums[0]) ? 0 : nums[0], hide_score: isNaN(nums[0]), num_comments: isNaN(nums[1]) ? 0 : nums[1],
+        is_self: true, stickied: true,
+        link_flair_text: flair ? flair.textContent.replace(/\s+/g, " ").trim() : "",
+        thumbnail: /^https:\/\//.test(thumb) ? thumb : "",
+      });
+    });
+    return out;
+  }
+
+  // A subreddit's right-rail partial → { name, prefixedName, description,
+  // weeklyVisitors, weeklyContributions, sections: [{ title, html }] }, or null.
+  // Each widget is titled by an h2; its block is the largest ancestor of that
+  // title holding no other widget title and not the header.
+  // (Approach from PR #28 by @dirkaw.)
+  function railFromHtml(doc) {
+    const header = doc.querySelector("shreddit-subreddit-header");
+    if (!header) return null;
+    const num = (n) => { const v = parseInt(header.getAttribute(n), 10); return isNaN(v) ? null : v; };
+    // widget titles sit straight in a <div>; rule titles are wrapped in <span>s
+    // (usually inside <li>/<details>, but a rule without a description isn't)
+    const titles = Array.from(doc.querySelectorAll("h2")).filter((h) =>
+      !h.closest("li, details, shreddit-subreddit-header") && h.parentElement && h.parentElement.tagName === "DIV");
+    // Find every widget's block before changing the DOM: removing a title early
+    // would let later widgets climb past it and swallow their neighbours.
+    const blocks = titles.map((h) => {
+      let block = h;
+      for (let p = block.parentElement; p && p !== doc.body; p = p.parentElement) {
+        if (p.contains(header) || titles.some((t) => t !== h && p.contains(t))) break;
+        block = p;
+      }
+      return block === h ? null : { h, block };
+    });
+    const sections = [];
+    blocks.forEach((w) => {
+      if (!w) return;
+      const links = Array.from(w.block.querySelectorAll("a[href]")).map((x) => x.getAttribute("href"));
+      if (links.length && links.every((x) => /^https:\/\/developers\.reddit\.com\/apps\//i.test(x))) return; // "Installed Apps" mod tooling
+      const title = w.h.textContent.replace(/\s+/g, " ").trim();
+      w.h.remove();
+      const html = cleanMd(w.block, { headingsAsStrong: true }).trim();
+      if (html.replace(/<[^>]*>/g, "").trim()) sections.push({ title, html });
+    });
+    return {
+      name: header.getAttribute("name") || "",
+      prefixedName: header.getAttribute("prefixed-name") || "",
+      description: header.getAttribute("description") || "",
+      weeklyVisitors: num("weekly-active-users"),
+      weeklyContributions: num("weekly-contributions"),
+      sections,
+    };
+  }
+
   // The HTML partial new Reddit pages listings through, or null where there's no
   // logged-out equivalent (r/all, multireddits, combined r/a+b) — those stay native.
   function htmlListingPath(route, params, after) {
@@ -3683,6 +3812,12 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     const key = "html:" + first;
     const hit = cache.get(key);
     if (hit && Date.now() - hit.t < CACHE_TTL) return hit.json;
+    // Stickies aren't in the feed partial — only on the subreddit page itself, as
+    // "community highlight" cards. Old reddit shows them atop the first hot page,
+    // so fetch that page alongside (best-effort: no stickies if it fails).
+    const stickiesP = route.scope === "sub" && (route.sort || "hot") === "hot" && !params.after
+      ? fetchHtmlDoc("/r/" + encodeURIComponent(route.sub) + "/").then(stickiesFromHtml).catch(() => [])
+      : Promise.resolve([]);
     const posts = [];
     let next = null, path = first;
     // The front page / r/popular feeds return only ~3 posts on their first call,
@@ -3690,6 +3825,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     for (let i = 0; i < 3 && path; i++) {
       const doc = await fetchHtmlDoc(path);
       doc.querySelectorAll("shreddit-post").forEach((el) => {
+        if (el.parentElement && el.parentElement.closest("shreddit-post")) return; // a crosspost's embedded original
         const d = postFromShreddit(el);
         if (d && !posts.some((p) => p.name === d.name)) posts.push(d);
       });
@@ -3702,9 +3838,22 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       err.status = 403;
       throw err;
     }
-    const json = { kind: "Listing", data: { children: posts.map((d) => ({ kind: "t3", data: d })), after: next, before: null } };
+    // A sticky that's also in the feed keeps its fuller feed data, moved to the top.
+    const stickies = (await stickiesP).map((s) => {
+      const i = posts.findIndex((p) => p.name === s.name);
+      if (i < 0) return s;
+      const p = posts.splice(i, 1)[0];
+      p.stickied = true;
+      return p;
+    });
+    const json = { kind: "Listing", data: { children: stickies.concat(posts).map((d) => ({ kind: "t3", data: d })), after: next, before: null } };
     cache.set(key, { json, t: Date.now() });
     return json;
+  }
+
+  // Only ever fetch/POST same-origin Reddit partials taken from parsed HTML.
+  function isPartialPath(p) {
+    return typeof p === "string" && p.indexOf("/svc/shreddit/") === 0 && p.indexOf("..") < 0;
   }
 
   // "N more replies" / ?comments-remaining=N on a more-comments partial.
@@ -3748,6 +3897,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       attach(parentId, node);
     });
     root.querySelectorAll("faceplate-partial[src*='/more-comments/']").forEach((p) => {
+      if (!isPartialPath(p.getAttribute("src"))) return;
       const anc = p.closest("shreddit-comment");
       const cursor = p.querySelector("input[name='cursor']");
       attach(anc ? anc.getAttribute("thingid") : null, {
@@ -3760,7 +3910,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
 
   // A thread page → the [postListing, commentListing] pair the .json would return.
   async function fetchCommentsHtml(pathname, sort) {
-    const doc = await fetchHtmlDoc(pathname + (sort ? "?sort=" + encodeURIComponent(sort) : ""));
+    const s = sort === "best" ? "confidence" : sort; // new Reddit's name for "best" (from PR #28)
+    const doc = await fetchHtmlDoc(pathname + (s ? "?sort=" + encodeURIComponent(s) : ""));
     const postEl = doc.querySelector("shreddit-post");
     const post = postEl && postFromShreddit(postEl);
     if (!post) {
@@ -3865,7 +4016,9 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     setupInfinite(
       async (after, count) => {
         const j = await fetchListing(route, { after, count, t: params.t, days: params.days, hours: params.hours });
-        let kids = (((j && j.data) || {}).children || []).filter((c) => c.kind === "t3");
+        // Skip posts already on the page: "hot" re-ranks between page fetches, so a
+        // post can resurface on a later page (seen live on busy subs).
+        let kids = (((j && j.data) || {}).children || []).filter((c) => c.kind === "t3" && !document.getElementById("thing_" + c.data.name));
         if (sinceUtc) kids = kids.filter((c) => (c.data.created_utc || 0) >= sinceUtc);
         const html = kids
           .map((c, i) => buildItem(c.data, { rank: count + 1 + i, odd: (count + i) % 2 === 0, showSub, expandoButton: true }))
@@ -3904,15 +4057,33 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     const sub = route.sub;
     // No single sidebar for aggregate/multireddit listings.
     if (!sub || sub === "all" || sub === "popular" || /[+\-]/.test(sub)) return;
+    const side = document.querySelector(".side"); // this page's — a later nav swaps the body
     let v;
     try {
       v = await fetchAboutRules(sub);
     } catch (e) {
       return;
     }
-    if (!v || !v.about || !v.about.data) return;
-    const side = document.querySelector(".side");
-    if (side) side.insertAdjacentHTML("beforeend", buildSidebar(v.about, v.rules));
+    let html = v && v.about && v.about.data ? buildSidebar(v.about, v.rules) : "";
+    if (!html && jsonBlocked) {
+      const rail = await fetchRail(sub); // logged out: about.json is blocked
+      if (rail) html = buildRailSidebar(rail);
+    }
+    if (html && side && side.isConnected) side.insertAdjacentHTML("beforeend", html);
+  }
+
+  async function fetchRail(sub) {
+    const key = "rail:" + sub.toLowerCase();
+    const hit = aboutCache.get(key);
+    if (hit && Date.now() - hit.t < ABOUT_TTL) return hit.v;
+    let v = null;
+    try {
+      v = railFromHtml(await fetchHtmlDoc("/svc/shreddit/feeds/subreddit-right-rail?name=" + encodeURIComponent(sub)));
+    } catch (e) {
+      /* no sidebar */
+    }
+    aboutCache.set(key, { v, t: Date.now() });
+    return v;
   }
 
   function renderError(status) {
@@ -4326,7 +4497,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   // comments in where the stub sits — they're the stub's siblings, i.e. further
   // replies to its parent (or further top-level comments).
   async function loadMorePartial(el, auto) {
-    if (el.dataset.orrLoading) return;
+    const src = el.getAttribute("data-partial");
+    if (el.dataset.orrLoading || !isPartialPath(src)) return;
     el.dataset.orrLoading = "1";
     const linkId = el.getAttribute("data-link");
     el.textContent = "loading more comments…";
@@ -4335,7 +4507,10 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       const body = new URLSearchParams();
       const cursor = el.getAttribute("data-cursor");
       if (cursor) body.set("cursor", cursor);
-      const res = await redditFetch(location.origin + el.getAttribute("data-partial"), {
+      // Not required today, but it's what new Reddit's own button sends (via PR #28).
+      const csrf = (/(?:^|;\s*)csrf_token=([^;]*)/.exec(document.cookie || "") || [])[1];
+      if (csrf) body.set("csrf_token", decodeURIComponent(csrf));
+      const res = await redditFetch(location.origin + src, {
         method: "POST", credentials: "include",
         headers: { Accept: HTML_ACCEPT, "Content-Type": "application/x-www-form-urlencoded" },
         body: body.toString(),

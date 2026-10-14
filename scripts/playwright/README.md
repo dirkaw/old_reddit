@@ -29,11 +29,12 @@ xvfb-run -a -s "-screen 0 1600x1000x24" node <script> …
 |---|---|
 | `run.mjs <ext> <out> <url>…` | Per URL, whether it was rebuilt or left native, plus post/comment/stub counts, the `.json`/partial responses, console errors and a screenshot. Writes `<out>/results.json`. `HEADED=1` runs it headed. |
 | `interact.mjs <ext> <out> [sub]` | Infinite scroll; in-page navigation from a listing to a thread; a nested "load more comments" stub; auto-loading top-level comments at the bottom; no duplicate IDs; no new-Reddit CSS left on the page. |
+| `live-extras.mjs <ext> <out> <sub> <videoSub>` | Stickies listed first in old-reddit green, the right-rail sidebar, and a video playing inline with audio from Reddit's packaged MP4 (checks `currentTime` and decoded audio bytes). |
 | `expand.mjs <ext> <out> <url> [n]` | Clicks the first *n* expandos (image, gallery, video) and screenshots them. |
 | `firefox.mjs <ext> <out> <listing> <thread>` | Installs the extension as a temporary add-on in Playwright's Firefox (over the Remote Debugging Protocol) and runs the listing, thread and load-more checks. |
 | `inspect-css.mjs <ext> <url> <selector>` | Lists every stylesheet in the rebuilt page and the rules that style one element. |
 | `css-timeline.mjs <ext> <out> <url>…` | Samples the page's `<style>`/`<link>` elements over time. This found new Reddit's CSS leaking in after the body swap. |
-| `offline.mjs <repo> <saved.html>…` | Runs the parsers exposed on `ORR_REBUILD` (`postFromShreddit`, `commentsFromHtml`, `cleanMd`, `isoToUtc`) against saved HTML with no network: post types, dates, comment-tree integrity, sanitiser. Exits non-zero on failure. |
+| `offline.mjs <repo> <saved.html>…` | Runs the parsers exposed on `ORR_REBUILD` against saved HTML with no network: post types, dates, comment-tree integrity, sanitiser (spoilers, screen-reader text), packaged-MP4 video, and, by fixture file name, right-rail sidebars (`*right_rail*`) and stickies (`_r_<sub>_.html`). Exits non-zero on failure. |
 
 ## Probes (no extension, raw Reddit behaviour)
 
@@ -46,6 +47,7 @@ xvfb-run -a -s "-screen 0 1600x1000x24" node <script> …
 | `probe7.mjs <out.json>` | Logged-out POST to more-comments works with just the `cursor` field (no CSRF token). |
 | `probe8.mjs` | Paging: `after=base64(fullname)`, 25 per page; the feeds return 3 posts on their first call. |
 | `probe9.mjs` | `Accept: text/vnd.reddit.partial+html` shrinks responses by 40–60%. |
+| `probe10.mjs [sub]` | The right-rail sidebar partial (`/svc/shreddit/feeds/subreddit-right-rail?name=`); stickies exist only as `community-highlight-card`s on the sub page; `shreddit-player`'s `packaged-media-json` lists signed progressive MP4s (H.264 + AAC). |
 | `save.mjs <outdir> <path>…` | Saves raw HTML of Reddit paths (input for `offline.mjs`). |
 
 Saved HTML and screenshots are Reddit content and test output, so they're gitignored.

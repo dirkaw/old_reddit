@@ -14,7 +14,7 @@ await page.addScriptTag({ content: "globalThis.chrome = { runtime: { getURL: (p)
 for (const f of ["common.js", "rebuild.js"]) await page.addScriptTag({ content: fs.readFileSync(path.join(repo, f), "utf8") });
 let fail = 0;
 const check = (name, ok, info) => { console.log((ok ? "PASS " : "FAIL ") + name + (info ? "  " + info : "")); if (!ok) fail++; };
-for (const f of files) {
+for (const f of files.filter((x) => !/right_rail/.test(path.basename(x)))) {
   const html = fs.readFileSync(f, "utf8");
   const r = await page.evaluate((html) => {
     const R = globalThis.ORR_REBUILD;
@@ -59,6 +59,45 @@ const sanit = await page.evaluate(() => {
 });
 console.log("\ncleanMd:", sanit);
 check("cleanMd strips handlers/js/script/http img", !/onclick|onerror|javascript:|<script|http:\/\/x|style=|evil/.test(sanit) && /<b>kept<\/b>/.test(sanit) && /https:\/\/i\.redd\.it\/a\.png/.test(sanit));
+// Spoilers / screen-reader text / sidebar headings
+const extra = await page.evaluate(() => {
+  const R = globalThis.ORR_REBUILD;
+  const d = new DOMParser().parseFromString('<div id=x><p>a <spoiler-text>secret</spoiler-text> <faceplate-screen-reader-content>hidden</faceplate-screen-reader-content></p><h2>Rule</h2></div>', "text/html");
+  return { normal: R.cleanMd(d.getElementById("x")), side: R.cleanMd(d.getElementById("x"), { headingsAsStrong: true }) };
+});
+check("cleanMd spoiler-text → md-spoiler-text, drops screen-reader text", /<span class="md-spoiler-text">secret<\/span>/.test(extra.normal) && !/hidden/.test(extra.normal) && /<h2>Rule<\/h2>/.test(extra.normal), extra.normal);
+check("cleanMd headingsAsStrong", /<strong>Rule<\/strong>/.test(extra.side), extra.side);
+// Optional fixtures, matched by file name: *right_rail* (sidebar), *_r_<sub>_.html (stickies), *type-video* (muxed MP4)
+for (const f of files) {
+  const html = fs.readFileSync(f, "utf8");
+  const base = path.basename(f);
+  if (/right_rail/.test(base)) {
+    const r = await page.evaluate((html) => {
+      const R = globalThis.ORR_REBUILD;
+      const rail = R.railFromHtml(R.parseHtmlDoc(html));
+      return rail && { name: rail.name, visitors: rail.weeklyVisitors, titles: rail.sections.map((s) => s.title), rulesLen: (rail.sections.find((s) => /rules/i.test(s.title)) || { html: "" }).html.length,
+        unsafe: /<script|on\w+=|javascript:/i.test(JSON.stringify(rail)), built: R.buildRailSidebar(rail).length, apps: rail.sections.some((s) => /installed apps/i.test(s.title)) };
+    }, html);
+    console.log("\n== " + base + "\n" + JSON.stringify(r));
+    check("rail parses header + rules", !!r && !!r.name && r.visitors > 0 && r.rulesLen > 100, r && r.titles.join(" | "));
+    check("rail drops Installed Apps, sanitized", !!r && !r.apps && !r.unsafe && r.built > 0);
+  }
+  if (/_r_[A-Za-z0-9_]+_\.html$/.test(base)) {
+    const s = await page.evaluate((html) => { const R = globalThis.ORR_REBUILD; return R.stickiesFromHtml(R.parseHtmlDoc(html)).map((d) => ({ name: d.name, title: d.title.slice(0, 40), score: d.score, n: d.num_comments, sticky: d.stickied, item: R.buildItem(d, {}).includes("stickied-tagline") })); }, html);
+    console.log("\n== " + base + " stickies " + JSON.stringify(s));
+    check("stickies parse + render as announcements", s.every((d) => /^t3_/.test(d.name) && d.title && d.sticky && d.item));
+  }
+  if (/type-video/.test(base)) {
+    const v = await page.evaluate((html) => {
+      const R = globalThis.ORR_REBUILD;
+      const posts = Array.from(R.parseHtmlDoc(html).querySelectorAll("shreddit-post")).map(R.postFromShreddit);
+      return posts.map((p) => ({ url: p.media && p.media.reddit_video.fallback_url.slice(0, 60), h: p.media && p.media.reddit_video.height, exp: R.postExpando(p) }))
+        .map((x) => ({ url: x.url, h: x.h, type: x.exp && x.exp.type, dash: x.exp && /data-dash-url/.test(x.exp.html) }));
+    }, html);
+    console.log("\n== " + base + " video " + JSON.stringify(v));
+    check("video uses packaged MP4 (≤720p, no dash)", v.every((x) => /^https:\/\/packaged-media\.redd\.it\//.test(x.url) && x.h <= 720 && x.type === "video" && !x.dash));
+  }
+}
 const dates = await page.evaluate(() => [globalThis.ORR_REBUILD.isoToUtc("2026-10-14T19:20:16.991000+0000"), globalThis.ORR_REBUILD.isoToUtc("2026-10-14T10:28:29.199Z")]);
 check("isoToUtc", dates[0] === Date.UTC(2026, 9, 14, 19, 20, 16, 991) / 1000 && dates[1] === Date.UTC(2026, 9, 14, 10, 28, 29, 199) / 1000, JSON.stringify(dates));
 console.log(fail ? `\n${fail} FAILED` : "\nALL PASS");
