@@ -159,8 +159,8 @@ them — no separate build.
 ### Publishing to the Chrome Web Store
 
 A ready-to-upload package is checked in at
-**[`dist/old-reddit-skin-chrome-3.7.6.zip`](dist/)** (`manifest.json` at the zip
-root, Chrome-validated, Firefox-only manifest keys stripped). To publish:
+**[`dist/classic-layout-for-reddit-chrome-<version>.zip`](dist/)** (`manifest.json`
+at the zip root, Firefox-only manifest keys stripped). To publish:
 
 1. Register once at the [Chrome Web Store developer dashboard](https://chrome.google.com/webstore/devconsole/)
    (one-time $5 USD fee).
@@ -173,12 +173,14 @@ root, Chrome-validated, Firefox-only manifest keys stripped). To publish:
 To rebuild the zip after changes:
 
 ```bash
-npm run build                                   # web-ext build -> web-ext-artifacts/*.zip
-# then strip the Firefox key + repackage into dist/ (see the release build for exact steps)
+node scripts/build-chromium-zip.mjs     # -> dist/classic-layout-for-reddit-chrome-<version>.zip
 ```
 
-The **same zip** also uploads to the free [Edge Add-ons](https://partner.microsoft.com/dashboard/microsoftedge/)
-store if you ever want an Edge listing.
+It packages the same files as the Firefox build but drops the Firefox-only manifest
+keys: `background.scripts` (Firefox needs it to run the background script; Edge's
+store rejects it in Manifest V3) and `browser_specific_settings`. The **same zip**
+uploads to the [Edge Add-ons](https://partner.microsoft.com/dashboard/microsoftedge/)
+store.
 
 ---
 
