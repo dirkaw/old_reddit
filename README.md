@@ -61,9 +61,9 @@ arrows, and per-post `[+]` expandos:
 
 1. Open the link above **in Firefox**.
 2. Click **Add to Firefox** → **Add**.
-3. **Log in to Reddit** (the extension reads Reddit's own API, which requires being
-   signed in), then open any subreddit — e.g. `https://www.reddit.com/r/pics` — and it
-   renders in the classic layout.
+3. Open any subreddit — e.g. `https://www.reddit.com/r/pics` — and it renders in the
+   classic layout. Works logged in or logged out (see the limitations below for what
+   differs when logged out).
 4. Manage it any time from the toolbar button (quick toggles) or
    `about:addons` → **Classic Layout for Reddit** → **Preferences** (all settings + filters).
 
@@ -115,9 +115,9 @@ One-click install, reviewed by Microsoft — it installs permanently and auto-up
 
 1. Open the link above **in Microsoft Edge**.
 2. Click **Get** → **Add extension**.
-3. **Log in to Reddit** (the extension reads Reddit's own API, which requires being
-   signed in), then open any subreddit — e.g. `https://www.reddit.com/r/pics` — and it
-   renders in the classic layout.
+3. Open any subreddit — e.g. `https://www.reddit.com/r/pics` — and it renders in the
+   classic layout. Works logged in or logged out (see the limitations below for what
+   differs when logged out).
 4. Manage it any time from the toolbar button (quick toggles) or
    `edge://extensions` → **Details** → **Extension options** (all settings + filters).
 
@@ -199,12 +199,21 @@ CSS, bundled with its asset URLs rewritten to `redditstatic.com`).
 
 **How the data works:** a content script does a same-origin
 `fetch('…/.json', {credentials:'include'})` that rides your logged-in session.
+Reddit shut off *unauthenticated* `.json` in 2026, so when that returns `403` (logged
+out), listings, comments and the subreddit sidebar are rebuilt instead from the same
+new-Reddit HTML pages Reddit serves any logged-out browser
+([shreddit.js](shreddit.js)).
 
 **Honest limitations (please read):**
 
-- **Logged-in only.** Reddit shut off *unauthenticated* `.json` in 2026, so
-  logged-out visitors get `403`. On any non-200 the extension **falls back** to
-  letting normal Reddit render — it never leaves the page blank.
+- **Logged out is a reduced mode.** Listings, comments, media and the sidebar work;
+  user profiles and search still fall back to normal Reddit. The sidebar shows new
+  Reddit's community widgets (rules, related subreddits, …) rather than the old
+  sidebar text, and stickies show without a post time. This path reads new Reddit's
+  markup, which changes more often than the JSON API — when it breaks, the fix is
+  usually a selector in the `SHREDDIT` table at the top of `shreddit.js`. On any
+  other failure the extension **falls back** to letting normal Reddit render — it
+  never leaves the page blank.
 - **Read-only.** Voting, saving, posting, and commenting are **not** wired up (they
   need an OAuth write token). The arrows/buttons render for looks but are inert.
 - **Listings, comments, user profiles, and search.** Post permalinks render old
@@ -250,21 +259,23 @@ expandos are always on. All settings live in `storage.local`.
 
 ## How it works
 
-A single content script ([common.js](common.js) + [rebuild.js](rebuild.js)) runs at
+A single content script ([common.js](common.js) + [shreddit.js](shreddit.js) + [rebuild.js](rebuild.js)) runs at
 `document_start` on `www.reddit.com` / `sh.reddit.com`:
 
 - **Route** — [common.js](common.js) maps the URL to a listing / comments / user /
   search route (else it leaves new Reddit alone).
 - **Fetch** — a same-origin `fetch('{path}/.json', {credentials:'include'})` (and
   `/api/me.json`, `/about.json`, `morechildren`, …) rides your logged-in session.
+  Logged out (`403`), [shreddit.js](shreddit.js) parses new Reddit's own HTML pages
+  and `/svc/shreddit/` partials into the same JSON shape instead.
 - **Render** — [rebuild.js](rebuild.js) builds old Reddit's real markup from the JSON
   and swaps out new Reddit's `<body>`, styled by
   [vendor/oldreddit.css](vendor/oldreddit.css) (the archived 2019 stylesheet, asset
   URLs rewritten to `redditstatic.com`).
 - **Enhance** — keyboard nav, comment collapse, infinite scroll, night mode, filters,
   user tags, hover cards and inline expandos run on the rebuilt DOM.
-- **Fail safe** — a visibility guard + 8s watchdog; any non-200 (e.g. logged-out
-  `403`) reveals normal Reddit instead of a blank page.
+- **Fail safe** — a visibility guard + 8s watchdog; any failure the HTML fallback
+  can't cover reveals normal Reddit instead of a blank page.
 
 ---
 

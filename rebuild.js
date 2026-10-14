@@ -6,14 +6,17 @@
 //
 // Data path: same-origin `fetch(path + '/.json', {credentials:'include'})`, which
 // rides the logged-in user's reddit_session cookie. Logged-out users get 403
-// (Reddit deprecated unauthenticated .json in 2026) — on ANY non-200 we fall back
-// and let new Reddit render, never leaving the page blank.
+// (Reddit deprecated unauthenticated .json in 2026); for listings and comments
+// we then rebuild from new Reddit's own server-rendered HTML instead (shreddit.js).
+// On any other failure we fall back and let new Reddit render, never leaving the
+// page blank.
 //
 // Pure builders are exposed on globalThis.ORR_REBUILD for unit testing.
 
 (function () {
   const api = typeof browser !== "undefined" ? browser : chrome;
   const ORR = globalThis.ORR;
+  const ORR_SHREDDIT = globalThis.ORR_SHREDDIT;
 
   // ---------- pure helpers (testable) ----------------------------------
 
@@ -316,7 +319,7 @@
     const nsfwTag = d.over_18 ? ` <span class="linkflairlabel" style="background:#c00;color:#fff">NSFW</span>` : "";
 
     return (
-      `<div class="thing id-${esc(d.name)} ${oddeven} ${nsfw} link" id="thing_${esc(d.name)}"` +
+      `<div class="thing id-${esc(d.name)} ${oddeven} ${nsfw}${d.stickied ? " stickied" : ""} link" id="thing_${esc(d.name)}"` +
       ` data-fullname="${esc(d.name)}" data-permalink="${esc(permalink)}" data-subreddit="${esc(d.subreddit)}"` +
       ` data-author="${esc(d.author)}" data-domain="${esc(d.domain)}" data-nsfw="${d.over_18 ? "true" : "false"}"` +
       ` data-flair="${esc(flairText)}" data-score="${esc(typeof d.score === "number" ? d.score : "")}" data-created="${esc(d.created_utc || 0)}"` +
@@ -338,10 +341,13 @@
       flairHtml + spoilerTag + nsfwTag +
       ` <span class="domain">(<a href="/domain/${esc(d.domain)}/">${esc(d.domain)}</a>)</span>` +
       `</p>` +
-      `<p class="tagline">submitted <time datetime="${esc(iso)}">${esc(formatAge(d.created_utc, opts.nowMs))}</time>` +
+      `<p class="tagline">submitted` +
+      (d.created_utc ? ` <time datetime="${esc(iso)}">${esc(formatAge(d.created_utc, opts.nowMs))}</time>` : "") +
       ` by <a href="/user/${esc(d.author)}" class="author may-blank">${esc(d.author)}</a>` +
       flairSpan("flair", d.author_flair_text, d.author_flair_richtext, d.author_flair_background_color, d.author_flair_text_color) +
-      `${toSub}</p>` +
+      toSub +
+      (d.stickied ? ` - <span class="stickied-tagline" title="selected by this subreddit's moderators">announcement</span>` : "") +
+      `</p>` +
       `<ul class="flat-list buttons">` +
       `<li class="first"><a href="${esc(permalink)}" class="bylink comments may-blank">${comments}</a></li>` +
       `<li class="share"><a class="post-sharing-button" href="${esc(permalink)}">share</a></li>` +
@@ -375,12 +381,12 @@
     const parts = [];
     if (listing.before) {
       parts.push(
-        `<a href="${route.basePath}/?count=${count}&before=${esc(listing.before)}${tq}" rel="prev nofollow">&lsaquo; prev</a>`
+        `<a href="${route.basePath}/?count=${count}&before=${esc(encodeURIComponent(listing.before))}${tq}" rel="prev nofollow">&lsaquo; prev</a>`
       );
     }
     if (listing.after) {
       parts.push(
-        `<a href="${route.basePath}/?count=${count}&after=${esc(listing.after)}${tq}" rel="next nofollow">next &rsaquo;</a>`
+        `<a href="${route.basePath}/?count=${count}&after=${esc(encodeURIComponent(listing.after))}${tq}" rel="next nofollow">next &rsaquo;</a>`
       );
     }
     if (!parts.length) return "";
@@ -558,6 +564,26 @@
     return html;
   }
 
+  // Logged-out sidebar, from new Reddit's right-rail widgets (shreddit.js's
+  // sidebarFromHtml). Section html is already sanitized there.
+  function buildRailSidebar(rail) {
+    const dn = rail.name || "";
+    let html = '<div class="spacer"><div class="titlebox">';
+    html += `<h1 class="redditname"><a class="hover" href="/r/${esc(dn)}/">${esc(rail.prefixedName || "r/" + dn)}</a></h1>`;
+    if (rail.weeklyVisitors != null)
+      html += `<div class="subscribers"><span class="number">${formatNumber(rail.weeklyVisitors)}</span> <span class="word">weekly visitors</span></div>`;
+    if (rail.weeklyContributions != null)
+      html += `<div class="users-online"><span class="number">${formatNumber(rail.weeklyContributions)}</span> <span class="word">weekly contributions</span></div>`;
+    if (rail.description) html += `<div class="usertext-body"><div class="md"><p>${esc(rail.description)}</p></div></div>`;
+    html += "</div></div>";
+    (rail.sections || []).forEach((s) => {
+      html += '<div class="spacer"><div class="sidecontentbox">';
+      if (s.title) html += `<div class="title"><h1>${esc(s.title)}</h1></div>`;
+      html += `<div class="content"><div class="md">${s.html}</div></div></div></div>`;
+    });
+    return html;
+  }
+
   // ---------- comments page builders (testable) ------------------------
 
   const COMMENT_SORTS = ["best", "top", "new", "controversial", "old", "qa"];
@@ -578,6 +604,14 @@
 
   function buildMore(d, linkId) {
     const count = d.count || 0;
+    if (d.orr_src) {
+      // logged-out (HTML) stub: loads a new-Reddit "more comments" partial
+      const label = count ? `load more comments (${esc(count)} ${count === 1 ? "reply" : "replies"})` : "load more comments";
+      return (
+        `<div class="morecomments"><a href="#" class="orr-more" data-link="${esc(linkId)}"` +
+        ` data-orr-src="${esc(d.orr_src)}" data-orr-cursor="${esc(d.orr_cursor || "")}" data-count="${esc(count)}">${label}</a></div>`
+      );
+    }
     if (!d.children || !d.children.length) {
       return `<div class="morecomments"><a href="#" class="orr-more" data-link="${esc(linkId)}" data-parent="${esc(d.parent_id || "")}">continue this thread &rarr;</a></div>`;
     }
@@ -3469,20 +3503,61 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     return location.origin + route.basePath + "/.json?" + q.toString();
   }
 
+  // Logged-out fallback (issue #27): Reddit 403s anonymous .json, so rebuild from
+  // the same new-Reddit HTML it serves a logged-out browser (see shreddit.js).
+  const HTML_FETCH_OPTS = { credentials: "include", headers: { Accept: "text/html" } };
+
+  function httpError(res) {
+    const err = new Error("HTTP " + res.status);
+    err.status = res.status;
+    err.retryAfter = retryAfterOf(res);
+    return err;
+  }
+
+  function htmlUrlFor(route, params) {
+    // Page 2+ in HTML mode: `after` is the next-page partial path from the last page.
+    if (ORR_SHREDDIT.isPartialPath(params.after)) return location.origin + params.after;
+    const q = new URLSearchParams();
+    if (route.sort === "top" || route.sort === "controversial") {
+      const bucket = windowBucket(params) || params.t;
+      if (bucket) q.set("t", bucket);
+    }
+    // A bare /r/sub is "best" on new Reddit; ask for "hot" explicitly to match old Reddit.
+    const path = route.basePath + (route.sort === "hot" && !/\/hot$/.test(route.basePath) ? "/hot" : "") + "/";
+    const qs = q.toString();
+    return location.origin + path + (qs ? "?" + qs : "");
+  }
+
+  async function fetchListingHtml(route, params) {
+    const url = htmlUrlFor(route, params);
+    const hit = cache.get(url);
+    if (hit && Date.now() - hit.t < CACHE_TTL) return hit.json;
+    const res = await redditFetch(url, HTML_FETCH_OPTS);
+    if (!res.ok) throw httpError(res);
+    const highlights = route.scope === "sub" && route.sort === "hot" && !ORR_SHREDDIT.isPartialPath(params.after);
+    const json = ORR_SHREDDIT.listingFromHtml(await res.text(), { highlights });
+    cache.set(url, { json, t: Date.now() });
+    return json;
+  }
+
   async function fetchListing(route, params) {
+    if (ORR_SHREDDIT.isPartialPath(params.after)) return fetchListingHtml(route, params);
     const url = jsonUrlFor(route, params);
     const hit = cache.get(url);
     if (hit && Date.now() - hit.t < CACHE_TTL) return hit.json;
     const res = await redditFetch(url);
-    if (!res.ok) {
-      const err = new Error("HTTP " + res.status);
-      err.status = res.status;
-      err.retryAfter = retryAfterOf(res);
-      throw err;
-    }
+    if (res.status === 403) return fetchListingHtml(route, params);
+    if (!res.ok) throw httpError(res);
     const json = await res.json();
     cache.set(url, { json, t: Date.now() });
     return json;
+  }
+
+  async function fetchCommentsHtml(url, sort) {
+    const s = ORR_SHREDDIT.commentSortParam(sort);
+    const res = await redditFetch(location.origin + url.pathname + (s ? "?sort=" + encodeURIComponent(s) : ""), HTML_FETCH_OPTS);
+    if (!res.ok) throw httpError(res);
+    return ORR_SHREDDIT.commentsFromHtml(await res.text());
   }
 
   function replaceBody(body, title) {
@@ -3565,9 +3640,28 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     } catch (e) {
       return;
     }
-    if (!v || !v.about || !v.about.data) return;
-    const side = document.querySelector(".side");
-    if (side) side.insertAdjacentHTML("beforeend", buildSidebar(v.about, v.rules));
+    let html = v && v.about && v.about.data ? buildSidebar(v.about, v.rules) : "";
+    if (!html) {
+      const rail = await fetchRail(sub); // logged out: about.json is 403
+      if (rail) html = buildRailSidebar(rail);
+    }
+    const side = html && document.querySelector(".side");
+    if (side) side.insertAdjacentHTML("beforeend", html);
+  }
+
+  async function fetchRail(sub) {
+    const key = "rail:" + sub.toLowerCase();
+    const hit = aboutCache.get(key);
+    if (hit && Date.now() - hit.t < ABOUT_TTL) return hit.v;
+    let v = null;
+    try {
+      const res = await redditFetch(location.origin + ORR_SHREDDIT.sidebarPath(sub), HTML_FETCH_OPTS);
+      if (res.ok) v = ORR_SHREDDIT.sidebarFromHtml(await res.text());
+    } catch (e) {
+      /* no sidebar */
+    }
+    aboutCache.set(key, { v, t: Date.now() });
+    return v;
   }
 
   function renderError(status) {
@@ -3666,12 +3760,12 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       if (sort) q.set("sort", sort);
       const jsonUrl = location.origin + url.pathname.replace(/\/$/, "") + "/.json?" + q.toString();
       const res = await redditFetch(jsonUrl);
-      if (!res.ok) {
-        const e = new Error("HTTP " + res.status);
-        e.status = res.status;
-        throw e;
+      if (res.status === 403) {
+        data = await fetchCommentsHtml(url, sort);
+      } else {
+        if (!res.ok) throw httpError(res);
+        data = await res.json();
       }
-      data = await res.json();
     } catch (err) {
       if (watchdog) clearTimeout(watchdog);
       if (firstLoad) {
@@ -3909,6 +4003,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     // user has deliberately hidden. Top-level "load more comments" has no
     // collapsed comment ancestor, so the scroll auto-loader is unaffected.
     if (el.closest(".thing.comment.collapsed")) return;
+    if (el.hasAttribute("data-orr-src")) return handleMoreHtml(el, auto);
     const linkId = el.getAttribute("data-link");
     const childrenCsv = el.getAttribute("data-children");
     if (!childrenCsv) {
@@ -4008,6 +4103,45 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     } else if (wrap) {
       wrap.remove(); // done — drop the stub
     }
+    refreshAfterMore();
+  }
+
+  // Logged-out stub: POST the stub's cursor to its new-Reddit partial, like new
+  // Reddit's own "more replies" button, and put what comes back where the stub was
+  // (the partial returns comments at the stub's own level, plus any further stubs).
+  async function handleMoreHtml(el, auto) {
+    const src = el.getAttribute("data-orr-src");
+    if (el.dataset.orrLoading || !ORR_SHREDDIT.isPartialPath(src)) return;
+    el.dataset.orrLoading = "1";
+    el.textContent = "loading more comments…";
+    let status = 0, retryAfter = 0, items = null;
+    try {
+      const res = await redditFetch(location.origin + src, ORR_SHREDDIT.moreRequest(el.getAttribute("data-orr-cursor")));
+      status = res.status;
+      retryAfter = retryAfterOf(res);
+      if (res.ok) items = ORR_SHREDDIT.moreCommentsFromHtml(await res.text());
+    } catch (e) {
+      status = 0;
+    }
+    if (!items) {
+      if (isTransient(status)) scheduleMoreRetry(el, auto, retryAfter);
+      else {
+        el.textContent = "load more comments — failed (" + status + "), click to retry";
+        el.dataset.orrLoading = "";
+        el.dataset.orrAttempt = "";
+      }
+      return;
+    }
+    el.dataset.orrAttempt = "";
+    const wrap = el.parentElement; // .morecomments
+    if (wrap && wrap.parentNode) {
+      wrap.insertAdjacentHTML("beforebegin", buildCommentTree(items, el.getAttribute("data-link")));
+      wrap.remove();
+    }
+    refreshAfterMore();
+  }
+
+  function refreshAfterMore() {
     patchTags(document);
     inlineImages(document);
     enhanceComments(document);
@@ -4033,7 +4167,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         { rootMargin: "600px" }
       );
     }
-    document.querySelectorAll("a.orr-more[data-children]:not([data-orr-observed])").forEach((a) => {
+    document.querySelectorAll("a.orr-more[data-children]:not([data-orr-observed]), a.orr-more[data-orr-src]:not([data-orr-observed])").forEach((a) => {
       if (a.closest(".child")) return; // nested "more" inside a thread → manual click only
       a.setAttribute("data-orr-observed", "1");
       commentMoreObserver.observe(a);

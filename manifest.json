@@ -43,7 +43,7 @@
         "*://amp.reddit.com/*",
         "*://sh.reddit.com/*"
       ],
-      "js": ["common.js", "rebuild.js"],
+      "js": ["common.js", "shreddit.js", "rebuild.js"],
       "run_at": "document_start",
       "all_frames": false
     },
