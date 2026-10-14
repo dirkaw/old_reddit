@@ -12,7 +12,7 @@
   // element id -> pref key for every boolean toggle
   const TOGGLES = {
     night: "nightMode", infinite: "infiniteScroll", redirect: "redirect",
-    subredditCss: "subredditCss", autoplay: "autoplayMedia", hideRead: "hideRead",
+    autoplay: "autoplayMedia", hideRead: "hideRead",
     autoCollapseBots: "autoCollapseBots", compact: "compactView", nightAuto: "nightAuto",
     highContrast: "highContrast", dyslexia: "dyslexiaFont", hoverPreview: "hoverPreview",
     expandImages: "expandImages", fixedThumbnails: "fixedThumbnails", foldReadComments: "foldReadComments",

@@ -29,9 +29,10 @@ You can clear all of it at any time by removing the extension.
 ## Network requests
 
 To display Reddit in the old layout, the extension makes requests **only to Reddit
-itself** (`reddit.com`), on your behalf, using your existing logged-in Reddit
-session — the same requests your browser already makes when you use Reddit. Examples:
-subreddit and comment listings (`…/.json`), your identity for the header
+itself** (`reddit.com`), on your behalf, using your existing Reddit session (logged
+in or not) — the same requests your browser already makes when you use Reddit.
+Examples: subreddit and comment listings (`…/.json`, or — when logged out — the
+same pages' HTML that Reddit's own site loads), your identity for the header
 (`/api/me.json`), and subreddit info (`…/about.json`).
 
 These requests go **to Reddit, and only to Reddit.** The extension sends **no data

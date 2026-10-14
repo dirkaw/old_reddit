@@ -15,14 +15,14 @@
   // Rebuild is now the only mode.
   const DEFAULTS = Object.freeze({
     enabled: true, infiniteScroll: true, nightMode: false, redirect: true, videoMuted: true,
-    subredditCss: true, autoplayMedia: false, hideRead: false, autoCollapseBots: false,
+    autoplayMedia: false, hideRead: false, autoCollapseBots: false,
     compactView: false, nightAuto: false, highContrast: false, dyslexiaFont: false,
     videoLoop: false, hoverPreview: true, expandImages: false, fixedThumbnails: false,
     foldReadComments: false, trackRecentSubs: true,
   });
   const BOOL_PREFS = [
     "enabled", "infiniteScroll", "nightMode", "redirect", "videoMuted",
-    "subredditCss", "autoplayMedia", "hideRead", "autoCollapseBots",
+    "autoplayMedia", "hideRead", "autoCollapseBots",
     "compactView", "nightAuto", "highContrast", "dyslexiaFont", "videoLoop", "hoverPreview",
     "expandImages", "fixedThumbnails", "foldReadComments", "trackRecentSubs",
   ];

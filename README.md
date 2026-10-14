@@ -61,9 +61,9 @@ arrows, and per-post `[+]` expandos:
 
 1. Open the link above **in Firefox**.
 2. Click **Add to Firefox** → **Add**.
-3. **Log in to Reddit** (the extension reads Reddit's own API, which requires being
-   signed in), then open any subreddit — e.g. `https://www.reddit.com/r/pics` — and it
-   renders in the classic layout.
+3. Open any subreddit — e.g. `https://www.reddit.com/r/pics` — and it renders in the
+   classic layout. No Reddit account needed (logging in adds subreddit sidebars and
+   rebuilt user/search pages — see [limitations](#experimental-rebuild-mode)).
 4. Manage it any time from the toolbar button (quick toggles) or
    `about:addons` → **Classic Layout for Reddit** → **Preferences** (all settings + filters).
 
@@ -115,9 +115,9 @@ One-click install, reviewed by Microsoft — it installs permanently and auto-up
 
 1. Open the link above **in Microsoft Edge**.
 2. Click **Get** → **Add extension**.
-3. **Log in to Reddit** (the extension reads Reddit's own API, which requires being
-   signed in), then open any subreddit — e.g. `https://www.reddit.com/r/pics` — and it
-   renders in the classic layout.
+3. Open any subreddit — e.g. `https://www.reddit.com/r/pics` — and it renders in the
+   classic layout. No Reddit account needed (logging in adds subreddit sidebars and
+   rebuilt user/search pages — see [limitations](#experimental-rebuild-mode)).
 4. Manage it any time from the toolbar button (quick toggles) or
    `edge://extensions` → **Details** → **Extension options** (all settings + filters).
 
@@ -199,12 +199,21 @@ CSS, bundled with its asset URLs rewritten to `redditstatic.com`).
 
 **How the data works:** a content script does a same-origin
 `fetch('…/.json', {credentials:'include'})` that rides your logged-in session.
+Logged out, Reddit answers every `.json` with a `403` "blocked by network
+security" page, so the extension instead reads the same data out of the HTML
+Reddit still serves (the listing partials new Reddit pages through, and each
+thread page — every post/comment carries its score, author, time, etc. as
+attributes) and maps it onto the JSON shape the renderer expects.
 
 **Honest limitations (please read):**
 
-- **Logged-in only.** Reddit shut off *unauthenticated* `.json` in 2026, so
-  logged-out visitors get `403`. On any non-200 the extension **falls back** to
-  letting normal Reddit render — it never leaves the page blank.
+- **Logged out works, with less.** Subreddit listings (every sort and time
+  filter), the front page, r/popular, and comment threads (including "load more
+  comments") all rebuild without an account. User profiles, search, wiki pages,
+  r/all, multireddits and combined `r/a+b` listings have no logged-out data source,
+  so those fall back to normal Reddit, and there's no subreddit sidebar. Anything
+  that fails **falls back** to letting normal Reddit render — it never leaves the
+  page blank.
 - **Read-only.** Voting, saving, posting, and commenting are **not** wired up (they
   need an OAuth write token). The arrows/buttons render for looks but are inert.
 - **Listings, comments, user profiles, and search.** Post permalinks render old
@@ -257,14 +266,16 @@ A single content script ([common.js](common.js) + [rebuild.js](rebuild.js)) runs
   search route (else it leaves new Reddit alone).
 - **Fetch** — a same-origin `fetch('{path}/.json', {credentials:'include'})` (and
   `/api/me.json`, `/about.json`, `morechildren`, …) rides your logged-in session.
+  Logged out, those `403`, so listings and threads are parsed from Reddit's own
+  server-rendered HTML instead (`/svc/shreddit/…` partials and the thread page).
 - **Render** — [rebuild.js](rebuild.js) builds old Reddit's real markup from the JSON
   and swaps out new Reddit's `<body>`, styled by
   [vendor/oldreddit.css](vendor/oldreddit.css) (the archived 2019 stylesheet, asset
   URLs rewritten to `redditstatic.com`).
 - **Enhance** — keyboard nav, comment collapse, infinite scroll, night mode, filters,
   user tags, hover cards and inline expandos run on the rebuilt DOM.
-- **Fail safe** — a visibility guard + 8s watchdog; any non-200 (e.g. logged-out
-  `403`) reveals normal Reddit instead of a blank page.
+- **Fail safe** — a visibility guard + watchdog; a page the extension can't load
+  reveals normal Reddit instead of a blank page.
 
 ---
 

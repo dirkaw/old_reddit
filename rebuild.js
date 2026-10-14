@@ -5,9 +5,10 @@
 // styled by the bundled archived stylesheet (vendor/oldreddit.bundled.css).
 //
 // Data path: same-origin `fetch(path + '/.json', {credentials:'include'})`, which
-// rides the logged-in user's reddit_session cookie. Logged-out users get 403
-// (Reddit deprecated unauthenticated .json in 2026) — on ANY non-200 we fall back
-// and let new Reddit render, never leaving the page blank.
+// rides the logged-in user's reddit_session cookie. Logged-out users get a 403
+// network-security block instead; for them listings and threads are read from
+// Reddit's server-rendered HTML (see "logged-out fallback" below). Anything else
+// that fails falls back to letting new Reddit render, never leaving the page blank.
 //
 // Pure builders are exposed on globalThis.ORR_REBUILD for unit testing.
 
@@ -578,6 +579,14 @@
 
   function buildMore(d, linkId) {
     const count = d.count || 0;
+    if (d.partial) {
+      // Logged-out fallback: a stub that loads one of Reddit's more-comments HTML partials.
+      const n = count ? ` (${esc(count)} ${count === 1 ? "reply" : "replies"})` : "";
+      return (
+        `<div class="morecomments"><a href="#" class="orr-more" data-link="${esc(linkId)}"` +
+        ` data-partial="${esc(d.partial)}" data-cursor="${esc(d.cursor || "")}">load more comments${n}</a></div>`
+      );
+    }
     if (!d.children || !d.children.length) {
       return `<div class="morecomments"><a href="#" class="orr-more" data-link="${esc(linkId)}" data-parent="${esc(d.parent_id || "")}">continue this thread &rarr;</a></div>`;
     }
@@ -978,6 +987,7 @@
     userTabmenuHtml, buildUserComment, buildUserPage, buildUserSidebar,
     meIdentity, userbarLoggedIn, userbarLoggedOut, srBarHtml, searchFormHtml, sideSearchHtml, buildHeader,
     searchJsonUrl, searchHref, buildSearchPage, buildWikiPage,
+    parseHtmlDoc, cleanMd, isoToUtc, postFromShreddit, commentsFromHtml, htmlListingPath,
   };
 
   // ---------- runtime driver -------------------------------------------
@@ -1213,7 +1223,7 @@
 
   let nightModeOn = true;
   // issue #6 toggles (set from prefs in start())
-  let subredditCssOn = true, autoplayOn = false, hideReadOn = false, autoCollapseBotsOn = false, nightAutoOn = false;
+  let autoplayOn = false, hideReadOn = false, autoCollapseBotsOn = false, nightAutoOn = false;
   let foldReadCommentsOn = false, trackRecentSubsOn = true;
   let dataCache = { filters: { subreddits: [], users: [], domains: [], keywords: [], flairs: [] }, userTags: {}, threadVisits: {} };
   const enhanceCache = new Map();
@@ -1248,37 +1258,9 @@
     nightModeOn = h >= 20 || h < 7;
   }
 
-  // Subreddit custom CSS (old-reddit's signature feature). Fetched per sub and
-  // injected AFTER our CSS so it themes the reproduced old-reddit DOM.
-  let navGen = 0; // bumped on every navigation; guards async subreddit-CSS fetches
-  let curSub = null; // subreddit of the current page (null when off-sub); lets the toggle apply live
-  function removeSubredditCss() {
-    document.querySelectorAll("#orr-subreddit-css").forEach((n) => n.remove());
-  }
-  async function applySubredditCss(sub) {
-    curSub = sub || null; // remember the page's sub even when disabled, so re-enabling can re-apply
-    removeSubredditCss();
-    if (!subredditCssOn || !sub || sub === "all" || sub === "popular" || /[+\-]/.test(sub)) return;
-    const gen = navGen;
-    try {
-      const res = await redditFetch(location.origin + "/r/" + encodeURIComponent(sub) + "/about/stylesheet.json?raw_json=1");
-      if (gen !== navGen || !res.ok) return; // navigated away → drop this sub's CSS
-      const j = await res.json();
-      if (gen !== navGen) return;
-      let css = j && j.data && j.data.stylesheet;
-      if (!css) return;
-      const imgs = (j.data && j.data.images) || [];
-      // Reddit stylesheets reference uploaded images as url(%%name%%).
-      css = css.replace(/%%([\w-]+)%%/g, (m, name) => {
-        const im = imgs.find((x) => x.name === name);
-        return im && im.url ? im.url : m;
-      });
-      const s = document.createElement("style");
-      s.id = "orr-subreddit-css";
-      s.textContent = css;
-      document.head.appendChild(s);
-    } catch (e) { /* ignore */ }
-  }
+  // No per-subreddit custom CSS: those stylesheets were written against old
+  // Reddit's exact DOM and broke our rebuild (e.g. r/todayilearned), so every page
+  // uses the standard old-reddit style.
 
   const ENHANCE_CSS = `
 .thing.comment.collapsed > .child, .thing.comment.collapsed > .entry .usertext-body,
@@ -3469,11 +3451,339 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     return location.origin + route.basePath + "/.json?" + q.toString();
   }
 
+  // ---------- logged-out fallback: Reddit's own server-rendered HTML -----------
+  // Reddit answers every LOGGED-OUT .json request with a 403 "You've been blocked
+  // by network security" HTML page (and old.reddit.com now redirects logged-out
+  // visitors to a login wall), so for them the JSON path above never works. But
+  // www.reddit.com still serves its own HTML — the listing partials new Reddit
+  // pages through, and each thread page — and every post/comment in it carries its
+  // data as attributes (<shreddit-post score=… comment-count=…>, <shreddit-comment
+  // thingid=… parentid=…>). When the .json is refused we read those instead and
+  // map them onto the exact JSON shapes the builders already take, so the rest of
+  // the extension doesn't know the difference.
+
+  let jsonBlocked = false; // a .json call was network-blocked on this page → go straight to HTML
+
+  // Reddit's network-security block is a 403 *HTML* page; a genuine API 403
+  // (private/quarantined sub) comes back as JSON and must still surface as-is.
+  function isJsonBlock(res) {
+    return !!res && res.status === 403 && !/json/i.test((res.headers && res.headers.get("content-type")) || "");
+  }
+
+  // Parse fetched HTML inertly (DOMParser runs no scripts and loads no images).
+  // Reddit defers much of a page — including most comments — inside <template>s;
+  // splice each template's content back in place so everything is in document
+  // order with its real nesting.
+  function parseHtmlDoc(text) {
+    const doc = new DOMParser().parseFromString(text, "text/html");
+    for (let i = 0; i < 25; i++) {
+      const ts = doc.querySelectorAll("template");
+      if (!ts.length) break;
+      ts.forEach((t) => t.replaceWith(t.content));
+    }
+    return doc;
+  }
+
+  // Asking for Reddit's own partial rendering (what its faceplate-partial loader
+  // requests) drops the page shell: ~40-60% smaller responses, same data.
+  const HTML_ACCEPT = "text/vnd.reddit.partial+html, text/html;q=0.9";
+  async function fetchHtmlDoc(path, init) {
+    const res = await redditFetch(location.origin + path, Object.assign({ credentials: "include", headers: { Accept: HTML_ACCEPT } }, init || {}));
+    if (!res.ok) {
+      const err = new Error("HTTP " + res.status);
+      err.status = res.status;
+      err.retryAfter = retryAfterOf(res);
+      throw err;
+    }
+    return parseHtmlDoc(await res.text());
+  }
+
+  // Rebuild Reddit-rendered rich text (post/comment bodies) from an allowlist of
+  // markdown-ish tags and attributes, unwrapping everything else — so nothing from
+  // the fetched page beyond plain formatting, links and images reaches our DOM.
+  const MD_KEEP = { P: 1, BR: 1, HR: 1, A: 1, EM: 1, STRONG: 1, B: 1, I: 1, DEL: 1, S: 1, SUP: 1, SUB: 1, CODE: 1, PRE: 1, BLOCKQUOTE: 1, UL: 1, OL: 1, LI: 1, H1: 1, H2: 1, H3: 1, H4: 1, H5: 1, H6: 1, TABLE: 1, THEAD: 1, TBODY: 1, TR: 1, TH: 1, TD: 1, SPAN: 1, IMG: 1 };
+  const MD_DROP = { SCRIPT: 1, STYLE: 1, TEMPLATE: 1, IFRAME: 1, OBJECT: 1, EMBED: 1, SVG: 1, BUTTON: 1, INPUT: 1, FORM: 1, TEXTAREA: 1, SELECT: 1, NOSCRIPT: 1, LINK: 1, META: 1 };
+  const MD_VOID = { BR: 1, HR: 1, IMG: 1 };
+  function cleanMd(node) {
+    let out = "";
+    if (!node) return out;
+    node.childNodes.forEach((n) => {
+      if (n.nodeType === 3) { out += esc(n.nodeValue); return; }
+      if (n.nodeType !== 1) return;
+      const tag = n.tagName.toUpperCase();
+      if (MD_DROP[tag]) return;
+      if (!MD_KEEP[tag]) { out += cleanMd(n); return; } // unknown wrapper → keep its contents
+      let attrs = "";
+      if (tag === "A") {
+        const href = n.getAttribute("href") || "";
+        if (/^(https?:\/\/|\/(?!\/)|#)/i.test(href)) attrs += ` href="${esc(href)}"`;
+      } else if (tag === "IMG") {
+        const src = n.getAttribute("src") || "";
+        if (!/^https:\/\//i.test(src)) return;
+        attrs += ` src="${esc(src)}" alt="${esc(n.getAttribute("alt") || "")}"`;
+        ["width", "height"].forEach((k) => { const v = n.getAttribute(k); if (v && /^\d+$/.test(v)) attrs += ` ${k}="${v}"`; });
+      } else if (tag === "SPAN") {
+        if (/\bmd-spoiler-text\b/.test(n.getAttribute("class") || "")) attrs += ' class="md-spoiler-text"';
+      } else if (tag === "TH" || tag === "TD") {
+        const al = n.getAttribute("align");
+        if (al && /^(left|right|center)$/i.test(al)) attrs += ` align="${al.toLowerCase()}"`;
+      } else if (tag === "OL") {
+        const st = n.getAttribute("start");
+        if (st && /^\d+$/.test(st)) attrs += ` start="${st}"`;
+      }
+      const t = tag.toLowerCase();
+      out += MD_VOID[tag] ? `<${t}${attrs}>` : `<${t}${attrs}>${cleanMd(n)}</${t}>`;
+    });
+    return out;
+  }
+
+  // "2026-10-14T19:20:16.991000+0000" → epoch seconds. Normalised to strict ISO
+  // first: microseconds and a colon-less offset aren't parsed by every engine.
+  function isoToUtc(s) {
+    if (!s) return 0;
+    const t = Date.parse(String(s).replace(/(\.\d{3})\d+/, "$1").replace(/([+-]\d\d)(\d\d)$/, "$1:$2"));
+    return isNaN(t) ? 0 : t / 1000;
+  }
+  function absUrl(u) {
+    try { return new URL(u, location.origin).href; } catch (e) { return ""; }
+  }
+  function intAttr(el, name) {
+    const n = parseInt(el.getAttribute(name), 10);
+    return isNaN(n) ? 0 : n;
+  }
+  // The smallest candidate in an <img>'s srcset (thumbnails don't need the 640px one).
+  function smallestSrc(img) {
+    if (!img) return "";
+    let best = "", bw = Infinity;
+    (img.getAttribute("srcset") || img.getAttribute("data-lazy-srcset") || "").split(",").forEach((part) => {
+      const m = /^\s*(\S+)\s+(\d+)w\s*$/.exec(part);
+      if (m && +m[2] < bw) { bw = +m[2]; best = m[1]; }
+    });
+    return best || img.getAttribute("src") || img.getAttribute("data-lazy-src") || "";
+  }
+
+  // One <shreddit-post> → the `data` object of a t3 in Reddit's JSON.
+  function postFromShreddit(el) {
+    const g = (n) => el.getAttribute(n) || "";
+    const fullname = g("id");
+    if (!/^t3_/.test(fullname)) return null;
+    const type = g("post-type");
+    const permalink = g("permalink");
+    const href = g("content-href");
+    const sub = g("subreddit-name") || g("subreddit-prefixed-name").replace(/^r\//, "");
+    const d = {
+      name: fullname, id: fullname.slice(3), permalink,
+      title: g("post-title"), author: g("author"), subreddit: sub,
+      domain: g("domain") || (type === "text" ? "self." + sub : ""),
+      score: intAttr(el, "score"), num_comments: intAttr(el, "comment-count"),
+      created_utc: isoToUtc(g("created-timestamp")),
+      over_18: el.hasAttribute("nsfw"), spoiler: el.hasAttribute("spoiler"),
+      is_self: type === "text",
+      url: absUrl(href || permalink),
+    };
+    if (type === "crosspost") {
+      const xm = /\/comments\/([a-z0-9]+)/i.exec(href);
+      if (xm) d.crosspost_parent = "t3_" + xm[1];
+    }
+
+    const flair = el.querySelector("shreddit-post-flair[slot='post-flair'], shreddit-post-flair");
+    const flairText = flair ? flair.textContent.replace(/\s+/g, " ").trim() : "";
+    if (flairText) {
+      d.link_flair_text = flairText;
+      const styled = flair.querySelector("[style*='background']");
+      const st = styled ? styled.getAttribute("style") || "" : "";
+      const bg = /background(?:-color)?\s*:\s*(#[0-9a-f]{3,8})/i.exec(st);
+      if (bg) {
+        d.link_flair_background_color = bg[1];
+        d.link_flair_text_color = /(?:^|;)\s*color\s*:\s*(#fff(?:fff)?|white)\b/i.test(st) ? "light" : "dark";
+      }
+    }
+
+    // Look for media only in the post's media slot: elsewhere the card carries
+    // i.redd.it award/avatar icons that must not be mistaken for the post's image.
+    const media = el.querySelector("[slot='post-media-container']") || el;
+    const player = media.querySelector("shreddit-player, shreddit-player-2");
+    const gallery = media.querySelector("gallery-carousel");
+    const primary = media.querySelector("img[data-post-media-primary]");
+    if (player) {
+      const vm = /https:\/\/v\.redd\.it\/[A-Za-z0-9]+/.exec(player.getAttribute("src") || (player.querySelector("source") || { getAttribute: () => "" }).getAttribute("src") || href);
+      const posterEl = player.querySelector("img[slot='poster']");
+      const poster = (posterEl && posterEl.getAttribute("src")) || player.getAttribute("poster") || "";
+      if (vm) {
+        d.is_video = true;
+        d.media = { reddit_video: { fallback_url: vm[0] + "/CMAF_480.mp4?source=fallback", has_audio: true } };
+      }
+      if (poster) { d.preview = { images: [{ source: { url: poster } }] }; d.thumbnail = poster; }
+    } else if (gallery) {
+      const items = [];
+      gallery.querySelectorAll("li[slot^='page-']").forEach((li) => {
+        const sized = li.querySelector("img[width]");
+        const full = li.querySelector("img[src^='https://i.redd.it/']");
+        const src = (full && full.getAttribute("src")) || (sized && (sized.getAttribute("src") || sized.getAttribute("data-lazy-src"))) || "";
+        if (src) items.push({ src, w: sized ? intAttr(sized, "width") : 0, h: sized ? intAttr(sized, "height") : 0, thumb: smallestSrc(sized) });
+      });
+      if (items.length) {
+        d.is_gallery = true;
+        d.gallery_data = { items: items.map((it, i) => ({ media_id: "m" + i })) };
+        d.media_metadata = {};
+        items.forEach((it, i) => { d.media_metadata["m" + i] = { s: { u: it.src, x: it.w || undefined, y: it.h || undefined } }; });
+        d.thumbnail = items[0].thumb || items[0].src;
+      }
+    } else if (primary && (type === "image" || type === "crosspost")) {
+      const full = media.querySelector("img[src^='https://i.redd.it/']:not([src*='/snoovatar/'])");
+      const src = (full && full.getAttribute("src")) || primary.getAttribute("src") || "";
+      if (src) {
+        d.post_hint = "image";
+        d.preview = { images: [{ source: { url: src } }] };
+        if (type === "image" && /^https:\/\/i\.redd\.it\//.test(href)) d.url = href;
+      }
+      d.thumbnail = smallestSrc(primary);
+    } else if (primary) {
+      d.thumbnail = smallestSrc(primary); // a link post's preview card: thumbnail only, like old reddit
+    } else {
+      const th = el.querySelector("[slot='thumbnail'] img");
+      if (th) d.thumbnail = smallestSrc(th);
+    }
+
+    const body = el.querySelector(`[id="${fullname}-post-rtjson-content"]`) || el.querySelector("shreddit-post-text-body [property='schema:articleBody']");
+    if (body && d.is_self) d.selftext_html = '<div class="md">' + cleanMd(body) + "</div>";
+    return d;
+  }
+
+  // The HTML partial new Reddit pages listings through, or null where there's no
+  // logged-out equivalent (r/all, multireddits, combined r/a+b) — those stay native.
+  function htmlListingPath(route, params, after) {
+    const sort = route.sort || "hot";
+    const bucket = sort === "top" || sort === "controversial" ? windowBucket(params) || params.t || "" : "";
+    const sub = route.scope === "sub" ? String(route.sub || "") : "";
+    const q = new URLSearchParams();
+    let base;
+    if (route.scope === "front" || sub.toLowerCase() === "popular") {
+      base = "/svc/shreddit/feeds/" + (route.scope === "front" ? "home-feed" : "popular-feed") + "?";
+      q.set("sort", sort.toUpperCase());
+      if (after) { q.set("after", btoa(after)); q.set("cursor", btoa(after)); }
+    } else if (route.scope === "sub" && !route.combined && /^[A-Za-z0-9_]+$/.test(sub) && sub.toLowerCase() !== "all") {
+      base = "/svc/shreddit/community-more-posts/" + encodeURIComponent(sort) + "/?";
+      q.set("name", sub);
+      if (after) q.set("after", btoa(after));
+    } else {
+      return null;
+    }
+    if (bucket) q.set("t", bucket.toUpperCase());
+    return base + q.toString();
+  }
+
+  async function fetchListingHtml(route, params) {
+    const first = htmlListingPath(route, params, params.after);
+    if (!first) {
+      const err = new Error("no logged-out listing source");
+      err.status = 403;
+      throw err;
+    }
+    const key = "html:" + first;
+    const hit = cache.get(key);
+    if (hit && Date.now() - hit.t < CACHE_TTL) return hit.json;
+    const posts = [];
+    let next = null, path = first;
+    // The front page / r/popular feeds return only ~3 posts on their first call,
+    // so keep paging (bounded) until there's a page's worth.
+    for (let i = 0; i < 3 && path; i++) {
+      const doc = await fetchHtmlDoc(path);
+      doc.querySelectorAll("shreddit-post").forEach((el) => {
+        const d = postFromShreddit(el);
+        if (d && !posts.some((p) => p.name === d.name)) posts.push(d);
+      });
+      next = posts.length && doc.querySelector("faceplate-partial[src*='after=']") ? posts[posts.length - 1].name : null;
+      if (posts.length >= 10 || !next) break;
+      path = htmlListingPath(route, params, next);
+    }
+    if (!posts.length && !params.after) {
+      const err = new Error("empty logged-out listing");
+      err.status = 403;
+      throw err;
+    }
+    const json = { kind: "Listing", data: { children: posts.map((d) => ({ kind: "t3", data: d })), after: next, before: null } };
+    cache.set(key, { json, t: Date.now() });
+    return json;
+  }
+
+  // "N more replies" / ?comments-remaining=N on a more-comments partial.
+  function moreCountOf(p) {
+    const m = /(\d[\d,]*)\s+more/i.exec(p.textContent || "") || /comments-remaining=(\d+)/.exec(p.getAttribute("src") || "");
+    return m ? parseInt(m[1].replace(/,/g, ""), 10) || 0 : 0;
+  }
+
+  // <shreddit-comment>s (+ their "more" partials) under `root` → a t1/more tree in
+  // Reddit's JSON shape. Comments whose parent isn't in this batch are the roots
+  // (top-level comments on a thread page; the stub's own siblings in a partial).
+  function commentsFromHtml(root, linkId) {
+    const nodes = new Map();
+    const roots = [];
+    const attach = (parentId, node) => {
+      const parent = parentId && nodes.get(parentId);
+      (parent ? parent.data.replies.data.children : roots).push(node);
+    };
+    root.querySelectorAll("shreddit-comment").forEach((el) => {
+      const id = el.getAttribute("thingid");
+      if (!id || nodes.has(id)) return;
+      const anc = el.parentElement && el.parentElement.closest("shreddit-comment");
+      const parentId = el.getAttribute("parentid") || (anc && anc.getAttribute("thingid")) || linkId;
+      let body = null;
+      el.querySelectorAll("[slot='comment']").forEach((b) => { if (!body && b.closest("shreddit-comment") === el) body = b; });
+      const deleted = el.hasAttribute("is-comment-deleted") || el.getAttribute("author") === "[deleted]";
+      const html = body ? cleanMd(body) : "";
+      const node = {
+        kind: "t1",
+        data: {
+          name: id, id: id.slice(3), parent_id: parentId, link_id: linkId,
+          author: el.getAttribute("author") || "[deleted]",
+          score: intAttr(el, "score"), score_hidden: !el.hasAttribute("score"),
+          created_utc: isoToUtc(el.getAttribute("created")),
+          permalink: el.getAttribute("permalink") || "",
+          body_html: html ? `<div class="md">${html}</div>` : deleted ? '<div class="md"><p>[deleted]</p></div>' : "",
+          replies: { data: { children: [] } },
+        },
+      };
+      nodes.set(id, node);
+      attach(parentId, node);
+    });
+    root.querySelectorAll("faceplate-partial[src*='/more-comments/']").forEach((p) => {
+      const anc = p.closest("shreddit-comment");
+      const cursor = p.querySelector("input[name='cursor']");
+      attach(anc ? anc.getAttribute("thingid") : null, {
+        kind: "more",
+        data: { count: moreCountOf(p), children: [], partial: p.getAttribute("src") || "", cursor: cursor ? cursor.value || "" : "" },
+      });
+    });
+    return roots;
+  }
+
+  // A thread page → the [postListing, commentListing] pair the .json would return.
+  async function fetchCommentsHtml(pathname, sort) {
+    const doc = await fetchHtmlDoc(pathname + (sort ? "?sort=" + encodeURIComponent(sort) : ""));
+    const postEl = doc.querySelector("shreddit-post");
+    const post = postEl && postFromShreddit(postEl);
+    if (!post) {
+      const err = new Error("no post in thread HTML");
+      err.status = 403;
+      throw err;
+    }
+    return [
+      { kind: "Listing", data: { children: [{ kind: "t3", data: post }] } },
+      { kind: "Listing", data: { children: commentsFromHtml(doc, post.name) } },
+    ];
+  }
+
   async function fetchListing(route, params) {
+    if (jsonBlocked) return fetchListingHtml(route, params);
     const url = jsonUrlFor(route, params);
     const hit = cache.get(url);
     if (hit && Date.now() - hit.t < CACHE_TTL) return hit.json;
     const res = await redditFetch(url);
+    if (isJsonBlock(res)) {
+      jsonBlocked = true;
+      return fetchListingHtml(route, params);
+    }
     if (!res.ok) {
       const err = new Error("HTTP " + res.status);
       err.status = res.status;
@@ -3485,6 +3795,40 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     return json;
   }
 
+  // New Reddit's own CSS must not style the rebuilt page. Its stylesheets stay in
+  // <head> after the body swap, and its still-running scripts keep adding more
+  // (e.g. the logged-out Google sign-in prompt's) — together they restyled
+  // old-reddit's markup (capitalised labels, resized fonts: the "formatting errors"
+  // reviewers saw, notably logged out). Drop them once we own the page and keep
+  // dropping late arrivals. Only Reddit/Google stylesheet links and class-less
+  // <style>s go: other extensions' styles (Dark Reader, Stylus…) carry a class.
+  let nativeCssObserver = null;
+  function isNativeCss(n) {
+    if (!n || n.nodeType !== 1) return false;
+    if (n.tagName === "STYLE") return !n.hasAttribute("class") && !/^orr-/.test(n.id || "");
+    if (n.tagName === "LINK")
+      return /(^|\s)stylesheet(\s|$)/i.test(n.getAttribute("rel") || "") &&
+        /^https:\/\/([\w-]+\.)*(redditstatic\.com|reddit\.com|redditmedia\.com|gstatic\.com|google\.com)\//i.test(n.href || "");
+    return false;
+  }
+  function purgeNativeCss() {
+    document.querySelectorAll("head > style, head > link, html > style, html > link, body > style, body > link").forEach((n) => {
+      if (isNativeCss(n)) n.remove();
+    });
+    if (typeof MutationObserver === "undefined") return;
+    if (!nativeCssObserver) {
+      nativeCssObserver = new MutationObserver((muts) => {
+        if (!active) return; // fell back to native Reddit → leave its styles alone
+        muts.forEach((m) => m.addedNodes.forEach((n) => { if (isNativeCss(n)) n.remove(); }));
+      });
+      if (document.head) nativeCssObserver.observe(document.head, { childList: true });
+      nativeCssObserver.observe(document.documentElement, { childList: true });
+    }
+    // Reddit also lazy-loads component CSS as <link>s appended to <body> (seen in
+    // Firefox); replaceBody swaps the body out, so re-arm on each new one.
+    if (document.body) nativeCssObserver.observe(document.body, { childList: true });
+  }
+
   function replaceBody(body, title) {
     teardownInfinite();
     teardownMores();
@@ -3494,6 +3838,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     if (document.body) document.documentElement.replaceChild(fresh, document.body);
     else document.documentElement.appendChild(fresh);
     document.documentElement.classList.add("orr-rebuilt");
+    purgeNativeCss();
     try {
       document.title = title;
     } catch (e) {
@@ -3536,6 +3881,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   const ABOUT_TTL = 300000; // 5 min
 
   async function fetchAboutRules(sub) {
+    if (jsonBlocked) return { about: null, rules: null }; // logged-out: these .json calls would just 403
     const key = sub.toLowerCase();
     const hit = aboutCache.get(key);
     if (hit && Date.now() - hit.t < ABOUT_TTL) return hit.v;
@@ -3558,7 +3904,6 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     const sub = route.sub;
     // No single sidebar for aggregate/multireddit listings.
     if (!sub || sub === "all" || sub === "popular" || /[+\-]/.test(sub)) return;
-    applySubredditCss(sub); // theme with the subreddit's own stylesheet (async)
     let v;
     try {
       v = await fetchAboutRules(sub);
@@ -3573,11 +3918,28 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   function renderError(status) {
     pendingScrollRestore = null; // a failed nav must not scroll the error/old page
     const st = document.getElementById("siteTable");
-    const msg =
-      status === 403
-        ? "Classic Layout for Reddit: the Reddit JSON API returned 403 (are you logged in? Reddit blocks logged-out .json). Turn off Rebuild mode to use normal Reddit."
-        : "Classic Layout for Reddit: couldn't load this page from the Reddit API (" + status + ").";
+    const msg = "Classic Layout for Reddit: couldn't load this page from Reddit (" + (status || "network error") + ") — try again in a moment.";
     if (st) st.innerHTML = `<div class="thing"><div class="entry"><p>${esc(msg)}</p></div></div>`;
+  }
+
+  // An in-page navigation whose data Reddit refused (e.g. a user page while logged
+  // out — there's no HTML fallback for those): hand the URL to a real page load
+  // instead of stranding the reader on an error stub. pushState already put this
+  // URL in history, so replace() rather than add a duplicate entry; the reload's
+  // first-load path then falls back to native Reddit. Transient failures (rate
+  // limit / 5xx / network) keep the in-page message — a reload would hit the same wall.
+  function failNav(url, status) {
+    if (isTransient(status)) {
+      renderError(status);
+      unhideGuard();
+      return;
+    }
+    try {
+      location.replace(url.href);
+    } catch (e) {
+      renderError(status);
+      unhideGuard();
+    }
   }
 
   async function loadListing(url, firstLoad) {
@@ -3626,7 +3988,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     if (gaveUp) return;
     if (!json) {
       if (firstLoad) { active = false; unhideGuard(); } // give up → new Reddit
-      else { renderError(lastStatus); unhideGuard(); }
+      else failNav(url, lastStatus);
       return;
     }
     await ensureCss();
@@ -3659,27 +4021,36 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     lastCommentsPathname = url.pathname;
     hideGuard();
     let watchdog = null;
-    if (firstLoad) watchdog = setTimeout(() => { if (!active) unhideGuard(); }, 8000);
+    // (longer than the JSON path needs: a logged-out load reads the ~1MB thread HTML)
+    if (firstLoad) watchdog = setTimeout(() => { if (!active) unhideGuard(); }, 15000);
     let data;
     try {
-      const q = new URLSearchParams({ raw_json: "1", limit: "200" });
-      if (sort) q.set("sort", sort);
-      const jsonUrl = location.origin + url.pathname.replace(/\/$/, "") + "/.json?" + q.toString();
-      const res = await redditFetch(jsonUrl);
-      if (!res.ok) {
-        const e = new Error("HTTP " + res.status);
-        e.status = res.status;
-        throw e;
+      if (jsonBlocked) {
+        data = await fetchCommentsHtml(url.pathname, sort);
+      } else {
+        const q = new URLSearchParams({ raw_json: "1", limit: "200" });
+        if (sort) q.set("sort", sort);
+        const jsonUrl = location.origin + url.pathname.replace(/\/$/, "") + "/.json?" + q.toString();
+        const res = await redditFetch(jsonUrl);
+        if (isJsonBlock(res)) {
+          jsonBlocked = true;
+          data = await fetchCommentsHtml(url.pathname, sort);
+        } else {
+          if (!res.ok) {
+            const e = new Error("HTTP " + res.status);
+            e.status = res.status;
+            throw e;
+          }
+          data = await res.json();
+        }
       }
-      data = await res.json();
     } catch (err) {
       if (watchdog) clearTimeout(watchdog);
       if (firstLoad) {
         active = false;
         unhideGuard();
       } else {
-        renderError(err.status || 0);
-        unhideGuard();
+        failNav(url, err.status || 0);
       }
       return;
     }
@@ -3731,8 +4102,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         active = false;
         unhideGuard();
       } else {
-        renderError(err.status || 0);
-        unhideGuard();
+        failNav(url, err.status || 0);
       }
       return;
     }
@@ -3818,8 +4188,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         active = false;
         unhideGuard();
       } else {
-        renderError(err.status || 0);
-        unhideGuard();
+        failNav(url, err.status || 0);
       }
       return;
     }
@@ -3856,12 +4225,9 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     // fire after we've moved on and refetch the old page into the new/error DOM.
     // (replaceBody also tears down on the success path; this covers the case
     // where the new load errors out and never reaches replaceBody.)
-    navGen++; // invalidate any in-flight subreddit-CSS fetch from the previous page
     teardownInfinite();
     teardownMores();
     if (autoplayObserver) { autoplayObserver.disconnect(); autoplayObserver = null; }
-    curSub = null; // off-sub until loadSidebar sets it again; keeps the live CSS toggle accurate
-    removeSubredditCss(); // clear the previous sub's theme; loadSidebar re-applies
     // Leaving comments entirely (not just re-sorting) — a later return to the
     // same thread should count as a genuine fresh visit again.
     if (!ORR.isCommentsRoute(url)) lastCommentsPathname = null;
@@ -3886,7 +4252,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       json = await res.json();
     } catch (err) {
       if (watchdog) clearTimeout(watchdog);
-      if (firstLoad) { active = false; unhideGuard(); } else { renderError(err.status || 0); unhideGuard(); }
+      if (firstLoad) { active = false; unhideGuard(); } else failNav(url, err.status || 0);
       return;
     }
     if (watchdog) clearTimeout(watchdog);
@@ -3909,6 +4275,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     // user has deliberately hidden. Top-level "load more comments" has no
     // collapsed comment ancestor, so the scroll auto-loader is unaffected.
     if (el.closest(".thing.comment.collapsed")) return;
+    if (el.hasAttribute("data-partial")) return loadMorePartial(el, auto);
     const linkId = el.getAttribute("data-link");
     const childrenCsv = el.getAttribute("data-children");
     if (!childrenCsv) {
@@ -3943,6 +4310,59 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     if (things) {
       el.dataset.orrAttempt = "";
       insertMoreThings(el, things, linkId, rest);
+      return;
+    }
+    if (isTransient(status)) {
+      scheduleMoreRetry(el, auto, retryAfter);
+    } else {
+      el.textContent = "load more comments — failed (" + status + "), click to retry";
+      el.dataset.orrLoading = "";
+      el.dataset.orrAttempt = "";
+    }
+  }
+
+  // Logged-out fallback for a "load more comments" stub: POST the more-comments
+  // partial new Reddit itself uses (with its cursor) and splice the returned
+  // comments in where the stub sits — they're the stub's siblings, i.e. further
+  // replies to its parent (or further top-level comments).
+  async function loadMorePartial(el, auto) {
+    if (el.dataset.orrLoading) return;
+    el.dataset.orrLoading = "1";
+    const linkId = el.getAttribute("data-link");
+    el.textContent = "loading more comments…";
+    let status = 0, retryAfter = 0, roots = null;
+    try {
+      const body = new URLSearchParams();
+      const cursor = el.getAttribute("data-cursor");
+      if (cursor) body.set("cursor", cursor);
+      const res = await redditFetch(location.origin + el.getAttribute("data-partial"), {
+        method: "POST", credentials: "include",
+        headers: { Accept: HTML_ACCEPT, "Content-Type": "application/x-www-form-urlencoded" },
+        body: body.toString(),
+      });
+      status = res.status;
+      retryAfter = retryAfterOf(res);
+      if (res.ok) roots = commentsFromHtml(parseHtmlDoc(await res.text()), linkId);
+    } catch (e) {
+      status = 0; // network error → treat as transient
+    }
+    if (!el.isConnected) return; // navigated away
+    if (roots) {
+      el.dataset.orrAttempt = "";
+      const wrap = el.parentElement; // .morecomments
+      const fresh = roots.filter((c) => c.kind !== "t1" || !document.getElementById("thing_" + c.data.name));
+      const tmp = document.createElement("div");
+      tmp.innerHTML = buildCommentTree(fresh, linkId, nowMsNow());
+      if (wrap && wrap.parentNode) {
+        while (tmp.firstElementChild) wrap.parentNode.insertBefore(tmp.firstElementChild, wrap);
+        wrap.remove();
+      }
+      patchTags(document);
+      inlineImages(document);
+      enhanceComments(document);
+      flagNewComments(document);
+      clampReadBodies();
+      observeMores();
       return;
     }
     if (isTransient(status)) {
@@ -4033,7 +4453,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         { rootMargin: "600px" }
       );
     }
-    document.querySelectorAll("a.orr-more[data-children]:not([data-orr-observed])").forEach((a) => {
+    document.querySelectorAll("a.orr-more[data-children]:not([data-orr-observed]), a.orr-more[data-partial]:not([data-orr-observed])").forEach((a) => {
       if (a.closest(".child")) return; // nested "more" inside a thread → manual click only
       a.setAttribute("data-orr-observed", "1");
       commentMoreObserver.observe(a);
@@ -4445,7 +4865,6 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     videoLoopOn = prefs.videoLoop === true;
     hoverPreviewOn = prefs.hoverPreview !== false;
     expandImagesOn = prefs.expandImages === true;
-    subredditCssOn = prefs.subredditCss !== false;
     autoplayOn = prefs.autoplayMedia === true;
     hideReadOn = prefs.hideRead === true;
     autoCollapseBotsOn = prefs.autoCollapseBots === true;
@@ -4518,12 +4937,10 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         applyLayoutVars(u);
       }
       // New issue-#6 toggles: apply live where cheap (a reload also works).
-      if (active && (changes.subredditCss || changes.autoplayMedia || changes.hideRead || changes.autoCollapseBots ||
+      if (active && (changes.autoplayMedia || changes.hideRead || changes.autoCollapseBots ||
                      changes.compactView || changes.nightAuto || changes.highContrast || changes.dyslexiaFont ||
                      changes.fixedThumbnails || changes.expandImages || changes.foldReadComments || changes.trackRecentSubs)) {
         ORR.getPrefs().then((p) => {
-          subredditCssOn = p.subredditCss !== false;
-          if (changes.subredditCss) applySubredditCss(curSub); // apply/remove the sub's CSS live
           autoplayOn = p.autoplayMedia === true;
           hideReadOn = p.hideRead === true;
           autoCollapseBotsOn = p.autoCollapseBots === true;
