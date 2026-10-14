@@ -1,0 +1,6 @@
+# staged extension copy, captured Reddit HTML, and test output
+ext/
+html/
+shots*/
+*.png
+results.json
