@@ -20,6 +20,17 @@ delete manifest.browser_specific_settings;
 if (manifest.background) delete manifest.background.scripts;
 if (!manifest.background || !manifest.background.service_worker) throw new Error("manifest has no background.service_worker");
 
+// Every local file the extension's pages reference must be in EXT_FILES — the popup
+// logo (icons/icon.svg) once went missing from the Chrome build this way.
+for (const page of EXT_FILES.filter((f) => f.endsWith(".html"))) {
+  const html = fs.readFileSync(path.join(repo, page), "utf8");
+  for (const [, ref] of html.matchAll(/\b(?:src|href)="([^"#?]+)"/g)) {
+    if (/^(?:[a-z]+:|\/\/|#)/i.test(ref)) continue; // external / anchor
+    const f = path.posix.join(path.posix.dirname(page), ref).replace(/^\.\//, "");
+    if (!EXT_FILES.includes(f)) throw new Error(`${page} references ${ref}, which isn't in scripts/ext-files.mjs`);
+  }
+}
+
 const stage = fs.mkdtempSync(path.join(os.tmpdir(), "orr-chromium-"));
 for (const f of EXT_FILES) {
   fs.mkdirSync(path.dirname(path.join(stage, f)), { recursive: true });
