@@ -583,6 +583,25 @@
     return html;
   }
 
+  // Old reddit's "over 18?" interstitial (its own markup + the bundled CSS's
+  // .interstitial styles). The continue button is wired by showAgeGate.
+  function buildAgeGate(opts) {
+    opts = opts || {};
+    const sub = opts.sub || "";
+    const inner =
+      buildHeader({ pageName: sub ? "r/" + sub : "reddit.com", pageHref: sub ? "/r/" + sub + "/" : "/", me: opts.me, route: { scope: sub ? "sub" : "front", sub } }) +
+      `<div class="content" role="main"><div class="interstitial">` +
+      `<img class="interstitial-image" src="https://www.redditstatic.com/interstitial-image-over18.png" alt="over 18" height="150" width="150">` +
+      `<div class="interstitial-message md-container"><div class="md">` +
+      `<h3>You must be 18+ to view this ${opts.post ? "post" : "community"}</h3>` +
+      `<p>You must be at least eighteen years old to view this content. Are you over eighteen and willing to see adult content?</p>` +
+      `</div></div>` +
+      `<div class="buttons"><a href="/" class="c-btn c-btn-primary">no thank you</a>` +
+      `<button type="button" class="c-btn c-btn-primary orr-over18-yes">continue</button></div>` +
+      `</div></div>`;
+    return { className: "over18", inner };
+  }
+
   // Logged-out sidebar, from new Reddit's right-rail widgets (railFromHtml).
   // Section html is already allowlist-sanitized there. (From PR #28 by @dirkaw.)
   function buildRailSidebar(rail) {
@@ -1035,7 +1054,7 @@
     meIdentity, userbarLoggedIn, userbarLoggedOut, srBarHtml, searchFormHtml, sideSearchHtml, buildHeader,
     searchJsonUrl, searchHref, buildSearchPage, buildWikiPage,
     parseHtmlDoc, cleanMd, isoToUtc, postFromShreddit, commentsFromHtml, htmlListingPath,
-    packagedMp4, stickiesFromHtml, railFromHtml, buildRailSidebar,
+    packagedMp4, stickiesFromHtml, railFromHtml, buildRailSidebar, buildAgeGate,
   };
 
   // ---------- runtime driver -------------------------------------------
@@ -3675,6 +3694,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       created_utc: isoToUtc(g("created-timestamp")),
       over_18: el.hasAttribute("nsfw"), spoiler: el.hasAttribute("spoiler"),
       stickied: el.hasAttribute("stickied"), locked: el.hasAttribute("locked"),
+      subreddit_nsfw: el.hasAttribute("subreddit-nsfw"),
       is_self: isSelf,
       url: absUrl(href || permalink),
     };
@@ -3700,6 +3720,9 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     // Look for media only in the post's media slot: elsewhere the card carries
     // i.redd.it award/avatar icons that must not be mistaken for the post's image.
     const media = el.querySelector("[slot='post-media-container']") || el;
+    // NSFW media comes twice: blur=40 previews (slot "blurred") and the real thing
+    // (slot "revealed"). Drop the blurred copy — the extension does its own blurring.
+    media.querySelectorAll("shreddit-blurred-container > [slot='blurred']").forEach((n) => n.remove());
     const player = media.querySelector("shreddit-player, shreddit-player-2");
     const gallery = media.querySelector("gallery-carousel");
     const primary = media.querySelector("img[data-post-media-primary]");
@@ -3904,7 +3927,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       err.status = 403;
       throw err;
     }
-    if (route.scope === "sub" && !params.after && posts.filter((p) => p.over_18).length * 2 >= posts.length) throw adultGate();
+    const adult = route.scope === "sub" && !params.after &&
+      (posts.some((p) => p.subreddit_nsfw) || posts.filter((p) => p.over_18).length * 2 >= posts.length);
     // A sticky that's also in the feed keeps its fuller feed data, moved to the top.
     const stickies = (await stickiesP).map((s) => {
       const i = posts.findIndex((p) => p.name === s.name);
@@ -3913,7 +3937,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       p.stickied = true;
       return p;
     });
-    const json = { kind: "Listing", data: { children: stickies.concat(posts).map((d) => ({ kind: "t3", data: d })), after: next, before: null } };
+    const json = { kind: "Listing", data: { children: stickies.concat(posts).map((d) => ({ kind: "t3", data: d })), after: next, before: null }, orr_adult: adult };
     cache.set(key, { json, t: Date.now() });
     return json;
   }
@@ -3986,7 +4010,6 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       err.status = 403;
       throw err;
     }
-    if (post.over_18) throw adultGate();
     let tree = commentsFromHtml(doc, post.name);
     if (commentId) {
       // A single comment's permalink: the page carries the whole thread, but old
@@ -4002,13 +4025,36 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     ];
   }
 
-  // Logged out, an adult (NSFW) community or post gets handed back to native Reddit
-  // so its own age gate applies — old reddit gated these behind an "over 18?"
-  // interstitial too. (Any non-transient error falls back to the native page.)
-  function adultGate() {
-    const err = new Error("NSFW: leave to Reddit's age gate");
-    err.status = 451;
-    return err;
+  // Logged out, adult (NSFW) communities and posts sit behind a one-click "over 18?"
+  // gate, like old reddit's interstitial (logged in, Reddit applies the account's
+  // own setting). The answer is remembered on this device.
+  let over18Ok = null;
+  async function over18Confirmed() {
+    if (over18Ok === null) {
+      try {
+        const r = await api.storage.local.get("over18");
+        over18Ok = !!(r && r.over18);
+      } catch (e) {
+        over18Ok = false;
+      }
+    }
+    return over18Ok;
+  }
+  function confirmOver18() {
+    over18Ok = true;
+    try { api.storage.local.set({ over18: true }); } catch (e) { /* this page still proceeds */ }
+  }
+  // Show the gate in place of the page; `proceed` renders the already-fetched page.
+  function showAgeGate(sub, isPost, proceed) {
+    active = true; // before replaceBody(): see loadListing's comment on why
+    replaceBody(buildAgeGate({ sub, post: isPost, me: meCached }), "over 18? — old reddit");
+    patchHeader();
+    const yes = document.querySelector(".orr-over18-yes");
+    if (yes) yes.addEventListener("click", () => {
+      confirmOver18();
+      window.scrollTo(0, 0);
+      proceed();
+    });
   }
 
   async function fetchListing(route, params) {
@@ -4249,6 +4295,12 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       return;
     }
     await ensureCss();
+    if (json.orr_adult && !(await over18Confirmed())) {
+      // logged-out adult community: old reddit's one-click "over 18?" gate first
+      showAgeGate(route.sub, false, () => { try { renderInto(route, json, params); } catch (e) { /* stay on the gate */ } });
+      unhideGuard();
+      return;
+    }
     // Never leave the page hidden if a render helper throws on some odd payload.
     try {
       // Set before rendering, not after: afterRender() synchronously synthesizes
@@ -4313,17 +4365,27 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     }
     if (watchdog) clearTimeout(watchdog);
     await ensureCss();
-    const body = buildCommentsBody(data, { sub: cr.sub, permalink: url.pathname, sort, me: meCached, singleComment: !!cr.commentId });
-    active = true; // before replaceBody(): see loadListing's comment on why
-    replaceBody(body, (body.sub ? "r/" + body.sub : "reddit") + " — comments");
-    unhideGuard();
-    patchHeader();
-    const realSub = body.sub || cr.sub;
-    rememberSub(realSub);
-    rememberCommentSort(realSub, sort);
-    addOtherDiscussions(data);
-    addMarkUnreadButton();
-    loadSidebar({ scope: "sub", sub: realSub });
+    const render = () => {
+      const body = buildCommentsBody(data, { sub: cr.sub, permalink: url.pathname, sort, me: meCached, singleComment: !!cr.commentId });
+      active = true; // before replaceBody(): see loadListing's comment on why
+      replaceBody(body, (body.sub ? "r/" + body.sub : "reddit") + " — comments");
+      unhideGuard();
+      patchHeader();
+      const realSub = body.sub || cr.sub;
+      rememberSub(realSub);
+      rememberCommentSort(realSub, sort);
+      addOtherDiscussions(data);
+      addMarkUnreadButton();
+      loadSidebar({ scope: "sub", sub: realSub });
+    };
+    const post = data && data[0] && data[0].data && data[0].data.children && data[0].data.children[0] && data[0].data.children[0].data;
+    if (jsonBlocked && post && post.over_18 && !(await over18Confirmed())) {
+      // logged-out adult post: old reddit's one-click "over 18?" gate first
+      showAgeGate(post.subreddit || cr.sub, true, render);
+      unhideGuard();
+      return;
+    }
+    render();
   }
 
   async function loadUser(url, firstLoad) {

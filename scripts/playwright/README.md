@@ -31,6 +31,7 @@ xvfb-run -a -s "-screen 0 1600x1000x24" node <script> …
 | `interact.mjs <ext> <out> [sub]` | Infinite scroll; in-page navigation from a listing to a thread; a nested "load more comments" stub; auto-loading top-level comments at the bottom; no duplicate IDs; no new-Reddit CSS left on the page. |
 | `live-extras.mjs <ext> <out> <sub> <videoSub>` | Stickies listed first in old-reddit green, the right-rail sidebar, and a video playing inline with audio from Reddit's packaged MP4 (checks `currentTime` and decoded audio bytes). |
 | `render-sweep.mjs <ext> <out> <url>…` | Opens every expando on each page and checks what rendered: broken images, videos that never load, the same media shown twice, empty expandos, page errors. Writes `<out>/render.json` and screenshots. |
+| `nsfw-gate.mjs <ext> <out> [sub]` | Logged-out over-18 gate: an adult sub shows old reddit's interstitial; **continue** renders the listing in place (no reroute) and is remembered across navigation and reloads; a direct NSFW thread in a fresh profile gets the post gate; expanded media is the real source, not Reddit's `blur=40` preview; "no thank you" goes to the front page. Exits non-zero on failure. |
 | `media-checks.mjs <ext>` | A GIF post loops muted, the reCAPTCHA badge stays hidden, and a single-comment permalink shows just that thread with the infobar. |
 | `expand.mjs <ext> <out> <url> [n]` | Clicks the first *n* expandos (image, gallery, video) and screenshots them. |
 | `firefox.mjs <ext> <out> <listing> <thread>` | Installs the extension as a temporary add-on in Playwright's Firefox (over the Remote Debugging Protocol) and runs the listing, thread and load-more checks. |
@@ -51,6 +52,7 @@ xvfb-run -a -s "-screen 0 1600x1000x24" node <script> …
 | `probe9.mjs` | `Accept: text/vnd.reddit.partial+html` shrinks responses by 40–60%. |
 | `probe10.mjs [sub]` | The right-rail sidebar partial (`/svc/shreddit/feeds/subreddit-right-rail?name=`); stickies exist only as `community-highlight-card`s on the sub page; `shreddit-player`'s `packaged-media-json` lists signed progressive MP4s (H.264 + AAC). |
 | `sweep.mjs <repo> <out> [maxThreads]` | Broad parser sweep: about 65 subreddits' listings plus a thread from each, run through `ORR_REBUILD`. Flags unknown post types, bodies or media in the raw HTML that weren't parsed, dropped comments, empty comment bodies and unhandled post attributes, and saves the raw HTML of anything flagged. Found `multi_media`, `gif`, `customPost`, crosspost bodies, `stickied`/`locked` and comment GIFs. |
+| `probe11.mjs [sub]` | NSFW logged out: listing partials and thread pages carry full data (`nsfw` + `subreddit-nsfw` attributes). Media sits in `shreddit-blurred-container`, with `slot="blurred"` (blur=40 previews) and `slot="revealed"` (the real thing). |
 | `save.mjs <outdir> <path>…` | Saves raw HTML of Reddit paths (input for `offline.mjs`). |
 
 Saved HTML and screenshots are Reddit content and test output, so they're gitignored.
