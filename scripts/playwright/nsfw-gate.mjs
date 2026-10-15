@@ -32,7 +32,8 @@ const check = (name, ok, info) => { console.log((ok ? "PASS " : "FAIL ") + name 
 let { ctx, profile } = await launch();
 let page = await ctx.newPage();
 const errors = [];
-page.on("pageerror", (e) => errors.push(String(e.message).slice(0, 160)));
+// (new Reddit's own scripts keep running after the body swap; its screen-reader announcer throws "t.announce is not a function" — not ours)
+page.on("pageerror", (e) => { if (!/\.announce is not a function/.test(e.message)) errors.push(String(e.message).slice(0, 160)); });
 await page.goto(`https://www.reddit.com/r/${sub}/`, { waitUntil: "domcontentloaded", timeout: 45000 });
 await page.waitForSelector(".interstitial, #siteTable", { timeout: 30000 }).catch(() => {});
 await page.waitForTimeout(1500);
