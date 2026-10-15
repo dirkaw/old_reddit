@@ -1,5 +1,7 @@
 // Build the Chrome / Edge / Opera / Brave package:
-//   dist/classic-layout-for-reddit-chrome-<version>.zip
+//   dist/classic-layout-for-reddit-chrome-<version>.zip   (for the stores / releases)
+//   dist/chromium/                                        (the same files unpacked — point
+//                                                          "Load unpacked" here; gitignored)
 // Same files as the Firefox build, but its manifest drops the Firefox-only keys:
 // `background.scripts` (Firefox needs it to run background.js; Edge's store
 // rejects it outright in MV3 and Chrome only warns) and `browser_specific_settings`
@@ -25,10 +27,21 @@ for (const f of EXT_FILES) {
   else fs.copyFileSync(path.join(repo, f), path.join(stage, f));
 }
 
+// Fixed timestamps → the same files always produce a byte-identical zip (no spurious
+// dist/ diffs from rebuilding).
+const FIXED = new Date("2020-01-01T00:00:00Z");
+for (const f of EXT_FILES) fs.utimesSync(path.join(stage, f), FIXED, FIXED);
+
 const dist = path.join(repo, "dist");
 fs.mkdirSync(dist, { recursive: true });
 for (const old of fs.readdirSync(dist)) if (/^classic-layout-for-reddit-chrome-.*\.zip$/.test(old)) fs.rmSync(path.join(dist, old));
 const out = path.join(dist, `classic-layout-for-reddit-chrome-${manifest.version}.zip`);
 execFileSync("zip", ["-q", "-X", out, ...EXT_FILES], { cwd: stage });
+// Chrome's "Load unpacked" needs a folder with manifest.json at its top — not the
+// zip, and not the repo root (Firefox-only manifest keys; node_modules has "_" files
+// Chrome refuses to load).
+const unpacked = path.join(dist, "chromium");
+fs.rmSync(unpacked, { recursive: true, force: true });
+fs.cpSync(stage, unpacked, { recursive: true });
 fs.rmSync(stage, { recursive: true, force: true });
-console.log(`built ${path.relative(repo, out)} (${EXT_FILES.length} files, Chromium manifest)`);
+console.log(`built ${path.relative(repo, out)} + ${path.relative(repo, unpacked)}/ (${EXT_FILES.length} files, Chromium manifest)`);

@@ -128,21 +128,27 @@ One-click install, reviewed by Microsoft — it installs permanently and auto-up
 
 ## Install on Chrome, Brave, and Opera
 
-There's no Chrome Web Store listing yet, so install it **unpacked** from a clone of
-this repo. All three are Chromium-based, so the **same folder** loads in every one of
-them — no separate build.
+There's no Chrome Web Store listing yet, so install it **unpacked**. All three are
+Chromium-based, so the **same folder** loads in every one of them.
 
-1. Clone or download this repo to a folder you'll **keep in place** (Chrome
+1. Get the extension folder, and put it somewhere you'll **keep in place** (Chrome
    remembers the path; if you move or delete the folder, the extension breaks on
-   next launch).
+   next launch):
+   - **Easiest:** download `classic-layout-<version>-chrome.zip` from the
+     [latest release](https://github.com/mkornreich/old_reddit/releases/latest) and
+     **extract it** (Chrome can't load the `.zip` itself).
+   - **From a clone of this repo:** run `node scripts/build-chromium-zip.mjs`. It
+     writes the ready-to-load folder `dist/chromium/`. Don't load the repo folder
+     itself: its manifest has Firefox-only keys, and `node_modules` contains files
+     Chrome refuses to load.
 2. Open the extensions page by typing one of these in the address bar (these
    can't be clickable links):
    - Chrome: `chrome://extensions`
    - Brave: `brave://extensions`
    - Opera: `opera://extensions`
 3. Turn on **Developer mode** (toggle top-right on Chrome/Brave/Opera; left sidebar on Edge).
-4. Click **Load unpacked** and select the **repo folder** (the one containing
-   `manifest.json` — the folder itself, not a file).
+4. Click **Load unpacked** and select the **extracted folder** (or `dist/chromium`):
+   the folder that directly contains `manifest.json`, not a file and not its parent.
 5. Open `https://www.reddit.com/r/pics` — it should be restyled. Pin the toolbar
    button via the puzzle-piece 🧩 icon to toggle the skin, or use **Details →
    Extension options**.
@@ -173,7 +179,7 @@ at the zip root, Firefox-only manifest keys stripped). To publish:
 To rebuild the zip after changes:
 
 ```bash
-node scripts/build-chromium-zip.mjs     # -> dist/classic-layout-for-reddit-chrome-<version>.zip
+node scripts/build-chromium-zip.mjs     # -> dist/classic-layout-for-reddit-chrome-<version>.zip + dist/chromium/
 ```
 
 It packages the same files as the Firefox build but drops the Firefox-only manifest

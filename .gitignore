@@ -16,3 +16,5 @@ creds.sh
 
 # but DO track the Web Store package
 !dist/*.zip
+# the unpacked copy of it, for Chrome's "Load unpacked" (regenerate: node scripts/build-chromium-zip.mjs)
+dist/chromium/
