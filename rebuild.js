@@ -159,6 +159,15 @@
   // Determine a post's expandable inline content, or null. Returns { type, html }
   // where type feeds the old-reddit expando-button sprite (selftext/image/video…).
   function postExpando(d) {
+    if (d.orr_app) {
+      // An interactive Devvit app post (game, poll, live thread…) only runs on Reddit itself.
+      const href = String(d.permalink || "").replace(/\/+$/, "") + "/#orr-native";
+      return {
+        type: "selftext",
+        html: `<div class="expando-container"><div class="usertext-body"><div class="md"><p>This post is an interactive Reddit app, which only runs on Reddit itself. ` +
+          `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">Open it on Reddit &#8599;</a></p></div></div></div>`,
+      };
+    }
     if (d.is_self) {
       return d.selftext_html
         ? { type: "selftext", html: `<div class="expando-container"><div class="usertext-body"><div class="md">${d.selftext_html}</div></div></div>` }
@@ -190,7 +199,8 @@
       const poster = pu ? ` poster="${esc(pu)}"` : "";
       return {
         type: dashUrl || rv.orr_muxed ? "video" : "video-muted",
-        html: `<div class="expando-container"><video class="reddit-video" controls preload="none"${poster}${audioAttr} width="${esc(rv.width || 640)}" height="${esc(rv.height || 360)}"><source src="${esc(rv.fallback_url)}" type="video/mp4"></video></div>`,
+        // (a Reddit "gif" is a silent MP4 — loop it like the GIF it stands for)
+        html: `<div class="expando-container"><video class="reddit-video" controls preload="none"${rv.is_gif ? " loop muted playsinline data-orr-gif" : ""}${poster}${audioAttr} width="${esc(rv.width || 640)}" height="${esc(rv.height || 360)}"><source src="${esc(rv.fallback_url)}" type="video/mp4"></video></div>`,
       };
     }
     const gal = (d.is_gallery && d.gallery_data && d.media_metadata) ? d
@@ -240,6 +250,10 @@
         ? ` width="${esc(source.width)}" height="${esc(source.height)}"` : "";
       return { type: "image", html: `<div class="expando-container"><span class="orr-resizable"><img class="preview"${wh} src="${esc(src)}"></span></div>` };
     }
+    // No media: show body text — a link post's own (new Reddit allows both), or a
+    // crossposted text post's original.
+    const text = d.selftext_html || (xp && xp.selftext_html);
+    if (text) return { type: "selftext", html: `<div class="expando-container"><div class="usertext-body"><div class="md">${text}</div></div></div>` };
     return null;
   }
 
@@ -285,6 +299,11 @@
     const style = bg ? ` style="background:${bg};border-color:${bg};color:${textColor === "light" ? "#fff" : "#000"}"` : "";
     const title = text || (Array.isArray(richtext) ? richtext.map((x) => (x && (x.e === "emoji" ? x.a : x.t)) || "").join("") : "");
     return ` <span class="${cls}"${style} title="${esc(title)}">${inner}</span>`;
+  }
+
+  // A deleted account renders as plain "[deleted]" (no /user/ link), like old reddit.
+  function authorHtml(a) {
+    return a === "[deleted]" ? "<span>[deleted]</span>" : `<a href="/user/${esc(a)}" class="author may-blank">${esc(a)}</a>`;
   }
 
   function buildItem(d, opts) {
@@ -342,10 +361,11 @@
       // (time/author can be unknown: a logged-out sticky comes from a highlight card that carries neither)
       `<p class="tagline">${d.created_utc || d.author ? "submitted" : ""}` +
       (d.created_utc ? ` <time datetime="${esc(iso)}">${esc(formatAge(d.created_utc, opts.nowMs))}</time>` : "") +
-      (d.author ? ` by <a href="/user/${esc(d.author)}" class="author may-blank">${esc(d.author)}</a>` : "") +
+      (d.author ? ` by ${authorHtml(d.author)}` : "") +
       flairSpan("flair", d.author_flair_text, d.author_flair_richtext, d.author_flair_background_color, d.author_flair_text_color) +
       toSub +
       (d.stickied ? `${d.created_utc || d.author || toSub ? " - " : ""}<span class="stickied-tagline" title="selected by this subreddit's moderators">announcement</span>` : "") +
+      (d.locked ? ` <span class="orr-locked" title="comments are locked">&#128274; locked</span>` : "") +
       `</p>` +
       `<ul class="flat-list buttons">` +
       `<li class="first"><a href="${esc(permalink)}" class="bylink comments may-blank">${comments}</a></li>` +
@@ -635,7 +655,7 @@
       `<div class="arrow down login-required" aria-hidden="true"></div></div>` +
       `<div class="entry unvoted">` +
       `<p class="tagline"><a href="javascript:void(0)" class="expand" role="button" aria-expanded="true" aria-label="collapse">[&ndash;]</a> ` +
-      `<a href="/user/${esc(d.author)}" class="author may-blank">${esc(d.author)}</a>` +
+      authorHtml(d.author) +
       flairSpan("flair", d.author_flair_text, d.author_flair_richtext, d.author_flair_background_color, d.author_flair_text_color) +
       ` <span class="score unvoted">${pts}</span> ` +
       `<time datetime="${esc(iso)}">${esc(formatAge(d.created_utc, opts.nowMs))}</time></p>` +
@@ -685,6 +705,9 @@
       `<div id="siteTable" class="sitetable">${postHtml}</div>` +
       `<div class="commentarea">` +
       commentSortMenuHtml(permalink, opts.sort) +
+      (opts.singleComment
+        ? `<div class="infobar">you are viewing a single comment's thread. <a href="${esc(permalink)}">view the rest of the comments &rarr;</a></div>`
+        : "") +
       `<div class="sitetable nestedlisting">${treeHtml || '<div class="thing">No comments yet.</div>'}</div>` +
       `</div></div>`;
 
@@ -1288,6 +1311,10 @@
   // uses the standard old-reddit style.
 
   const ENHANCE_CSS = `
+.usertext-body .md img, .usertext-body .md video { max-width:100%; height:auto; }
+.orr-locked { color:#888; }
+/* Reddit's scripts add Google's reCAPTCHA badge for logged-out visitors; on the rebuilt page it just covers our corner buttons */
+html.orr-rebuilt .grecaptcha-badge { visibility:hidden !important; }
 .thing.comment.collapsed > .child, .thing.comment.collapsed > .entry .usertext-body,
 .thing.comment.collapsed > .entry .flat-list.buttons { display:none !important; }
 .thing.comment.collapsed > .entry .tagline { opacity:.75; }
@@ -2515,6 +2542,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     }
     for (const a of links) {
       if (a.dataset.orrImg) continue;
+      // a link already wrapping its media (an inline image/GIF in a new-Reddit body) — don't show it twice
+      if (a.querySelector("img, video")) continue;
       const href = a.getAttribute("href") || "";
       if (!isImageUrl(href)) continue;
       a.dataset.orrImg = "1";
@@ -2716,7 +2745,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   function setVideoLoop(on) {
     videoLoopOn = !!on;
     document.querySelectorAll(".orr-video-wrap video, video.orr-directvideo, .expando video").forEach((v) => {
-      v.loop = videoLoopOn;
+      v.loop = videoLoopOn || v.hasAttribute("data-orr-gif");
       if (v._orrPaintLoop) v._orrPaintLoop();
     });
     ORR.setPrefs({ videoLoop: videoLoopOn });
@@ -2724,7 +2753,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   function addVideoControls(video) {
     if (!video || video.dataset.orrVctl) return;
     video.dataset.orrVctl = "1";
-    video.loop = videoLoopOn;
+    video.loop = videoLoopOn || video.hasAttribute("data-orr-gif"); // GIFs always loop
     try { if (videoSpeed && videoSpeed !== 1) video.playbackRate = videoSpeed; } catch (e) {}
     if (videoVolume != null) { try { video.volume = videoVolume; } catch (e) {} }
     let wrap = video.closest(".orr-video-wrap");
@@ -3024,6 +3053,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     try { links = root.querySelectorAll(".commentarea .md a[href], .commentarea .usertext-body a[href]"); } catch (e) { return; }
     for (const a of links) {
       if (a.dataset.orrMedia) continue;
+      if (a.querySelector("img, video")) continue; // already shows its media inline
       const href = a.getAttribute("href") || "";
       const ext = externalMediaExpando(href);
       if (ext) {
@@ -3541,6 +3571,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       if (MD_DROP[tag]) return;
       // new Reddit marks spoilers with a <spoiler-text> element; old reddit's CSS hides .md-spoiler-text
       if (tag === "SPOILER-TEXT") { out += `<span class="md-spoiler-text">${cleanMd(n, opts)}</span>`; return; }
+      if (tag === "SHREDDIT-PLAYER" || tag === "SHREDDIT-PLAYER-2") { out += inlinePlayerHtml(n); return; }
       if (opts && opts.headingsAsStrong && (tag === "H1" || tag === "H2")) tag = "STRONG";
       if (!MD_KEEP[tag]) { out += cleanMd(n, opts); return; } // unknown wrapper → keep its contents
       let attrs = "";
@@ -3565,6 +3596,16 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       out += MD_VOID[tag] ? `<${t}${attrs}>` : `<${t}${attrs}>${cleanMd(n, opts)}</${t}>`;
     });
     return out;
+  }
+
+  // A media player inside a comment/post body. GIFs (incl. giphy) are silent MP4s on
+  // Reddit's CDN → a looping inline video. Videos stream from v.redd.it (HLS) →
+  // the plain v.redd.it link the JSON API gives, which expandCommentMedia expands.
+  function inlinePlayerHtml(player) {
+    const gif = gifPlayerSrc(player);
+    if (gif) return `<video class="orr-inline-gif" src="${esc(gif)}" autoplay loop muted playsinline preload="metadata"></video>`;
+    const m = /^https:\/\/v\.redd\.it\/(?:link\/[^/]+\/asset\/)?([A-Za-z0-9]+)/.exec(player.getAttribute("src") || "");
+    return m ? `<a href="https://v.redd.it/${m[1]}">https://v.redd.it/${m[1]}</a>` : "";
   }
 
   // "2026-10-14T19:20:16.991000+0000" → epoch seconds. Normalised to strict ISO
@@ -3621,16 +3662,23 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     const permalink = g("permalink");
     const href = g("content-href");
     const sub = g("subreddit-name") || g("subreddit-prefixed-name").replace(/^r\//, "");
+    // A self post: "text", or "multi_media" (text with inline images), or any post
+    // that's a self.<sub> domain / links to itself — new Reddit has more types than
+    // old reddit's link-vs-self split.
+    const isSelf = type === "text" || type === "multi_media" || /^self\./i.test(g("domain")) ||
+      (!!href && absUrl(href).replace(/\/+$/, "") === absUrl(permalink).replace(/\/+$/, ""));
     const d = {
       name: fullname, id: fullname.slice(3), permalink,
       title: g("post-title"), author: g("author"), subreddit: sub,
-      domain: g("domain") || (type === "text" ? "self." + sub : ""),
+      domain: g("domain") || (isSelf ? "self." + sub : ""),
       score: intAttr(el, "score"), num_comments: intAttr(el, "comment-count"),
       created_utc: isoToUtc(g("created-timestamp")),
       over_18: el.hasAttribute("nsfw"), spoiler: el.hasAttribute("spoiler"),
-      is_self: type === "text",
+      stickied: el.hasAttribute("stickied"), locked: el.hasAttribute("locked"),
+      is_self: isSelf,
       url: absUrl(href || permalink),
     };
+    if (el.hasAttribute("is-author-deleted") || !d.author) d.author = "[deleted]";
     if (type === "crosspost") {
       const xm = /\/comments\/([a-z0-9]+)/i.exec(href);
       if (xm) d.crosspost_parent = "t3_" + xm[1];
@@ -3660,12 +3708,17 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       const posterEl = player.querySelector("img[slot='poster']");
       const poster = (posterEl && posterEl.getAttribute("src")) || player.getAttribute("poster") || "";
       const mp4 = packagedMp4(player);
+      const gifMp4 = gifPlayerSrc(player);
       if (mp4) {
         // Reddit's own signed, progressive MP4 with the audio muxed in: a plain
         // <video> plays it with sound — no dash.js and no v.redd.it access needed
         // (v.redd.it itself 403s us; see redditVideoReachable).
         d.is_video = true;
         d.media = { reddit_video: { fallback_url: mp4.url, width: mp4.width, height: mp4.height, has_audio: false, orr_muxed: true } };
+      } else if (gifMp4) {
+        // post-type "gif": Reddit serves the GIF as a silent MP4 rendition
+        d.is_video = true;
+        d.media = { reddit_video: { fallback_url: gifMp4, is_gif: true, has_audio: false } };
       } else if (vm) {
         d.is_video = true;
         d.media = { reddit_video: { fallback_url: vm[0] + "/CMAF_480.mp4?source=fallback", has_audio: true } };
@@ -3702,9 +3755,22 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       if (th) d.thumbnail = smallestSrc(th);
     }
 
-    const body = el.querySelector(`[id="${fullname}-post-rtjson-content"]`) || el.querySelector("shreddit-post-text-body [property='schema:articleBody']");
-    if (body && d.is_self) d.selftext_html = '<div class="md">' + cleanMd(body) + "</div>";
+    // An interactive Devvit app post (games, polls, live threads…): nothing to rebuild
+    if (type === "customPost" || el.querySelector("devvit2-custom-post, devvit-blocks-renderer, shreddit-devvit-ui")) d.orr_app = true;
+
+    const ownBody = el.querySelector(`[id="${fullname}-post-rtjson-content"]`);
+    const body = ownBody || el.querySelector("shreddit-post-text-body [property='schema:articleBody']");
+    const bodyHtml = body ? '<div class="md">' + cleanMd(body) + "</div>" : "";
+    if (body && (d.is_self || ownBody)) d.selftext_html = bodyHtml; // (a link post can carry body text too)
+    else if (body && type === "crosspost") d.crosspost_parent_list = [{ is_self: true, selftext_html: bodyHtml }]; // the original's text
     return d;
+  }
+
+  // A <shreddit-player> that plays a GIF (post or comment): its src is a silent MP4
+  // rendition on Reddit's image CDN. "" if this player isn't one.
+  function gifPlayerSrc(player) {
+    const src = (player && player.getAttribute("src")) || "";
+    return (player.hasAttribute("gif") || /[?&]format=mp4\b/.test(src)) && /^https:\/\/(preview|external-preview|i)\.redd\.it\//.test(src) ? src : "";
   }
 
   // A subreddit page's "community highlight" cards (its stickies) → t3 data. A card
@@ -3838,6 +3904,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       err.status = 403;
       throw err;
     }
+    if (route.scope === "sub" && !params.after && posts.filter((p) => p.over_18).length * 2 >= posts.length) throw adultGate();
     // A sticky that's also in the feed keeps its fuller feed data, moved to the top.
     const stickies = (await stickiesP).map((s) => {
       const i = posts.findIndex((p) => p.name === s.name);
@@ -3909,7 +3976,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   }
 
   // A thread page → the [postListing, commentListing] pair the .json would return.
-  async function fetchCommentsHtml(pathname, sort) {
+  async function fetchCommentsHtml(pathname, sort, commentId) {
     const s = sort === "best" ? "confidence" : sort; // new Reddit's name for "best" (from PR #28)
     const doc = await fetchHtmlDoc(pathname + (s ? "?sort=" + encodeURIComponent(s) : ""));
     const postEl = doc.querySelector("shreddit-post");
@@ -3919,10 +3986,29 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       err.status = 403;
       throw err;
     }
+    if (post.over_18) throw adultGate();
+    let tree = commentsFromHtml(doc, post.name);
+    if (commentId) {
+      // A single comment's permalink: the page carries the whole thread, but old
+      // reddit shows just the top-level thread holding that comment.
+      const id = "t1_" + commentId;
+      const holds = (n) => n.kind === "t1" && (n.data.name === id || n.data.replies.data.children.some(holds));
+      const root = tree.find(holds);
+      if (root) tree = [root];
+    }
     return [
       { kind: "Listing", data: { children: [{ kind: "t3", data: post }] } },
-      { kind: "Listing", data: { children: commentsFromHtml(doc, post.name) } },
+      { kind: "Listing", data: { children: tree } },
     ];
+  }
+
+  // Logged out, an adult (NSFW) community or post gets handed back to native Reddit
+  // so its own age gate applies — old reddit gated these behind an "over 18?"
+  // interstitial too. (Any non-transient error falls back to the native page.)
+  function adultGate() {
+    const err = new Error("NSFW: leave to Reddit's age gate");
+    err.status = 451;
+    return err;
   }
 
   async function fetchListing(route, params) {
@@ -4197,7 +4283,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     let data;
     try {
       if (jsonBlocked) {
-        data = await fetchCommentsHtml(url.pathname, sort);
+        data = await fetchCommentsHtml(url.pathname, sort, cr.commentId);
       } else {
         const q = new URLSearchParams({ raw_json: "1", limit: "200" });
         if (sort) q.set("sort", sort);
@@ -4205,7 +4291,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         const res = await redditFetch(jsonUrl);
         if (isJsonBlock(res)) {
           jsonBlocked = true;
-          data = await fetchCommentsHtml(url.pathname, sort);
+          data = await fetchCommentsHtml(url.pathname, sort, cr.commentId);
         } else {
           if (!res.ok) {
             const e = new Error("HTTP " + res.status);
@@ -4227,7 +4313,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     }
     if (watchdog) clearTimeout(watchdog);
     await ensureCss();
-    const body = buildCommentsBody(data, { sub: cr.sub, permalink: url.pathname, sort, me: meCached });
+    const body = buildCommentsBody(data, { sub: cr.sub, permalink: url.pathname, sort, me: meCached, singleComment: !!cr.commentId });
     active = true; // before replaceBody(): see loadListing's comment on why
     replaceBody(body, (body.sub ? "r/" + body.sub : "reddit") + " — comments");
     unhideGuard();

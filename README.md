@@ -216,7 +216,8 @@ attributes) and maps it onto the JSON shape the renderer expects.
   (rules, bookmarks, …) rather than old Reddit's sidebar text, and stickies show
   without a post time or author. User profiles, search, wiki pages, r/all,
   multireddits and combined `r/a+b` listings have no logged-out data source, so
-  those fall back to normal Reddit. Anything that fails **falls back** to letting
+  those fall back to normal Reddit. So do adult (NSFW) communities and posts, so
+  Reddit's own age gate applies. Anything that fails **falls back** to letting
   normal Reddit render — it never leaves the page blank.
 - **Read-only.** Voting, saving, posting, and commenting are **not** wired up (they
   need an OAuth write token). The arrows/buttons render for looks but are inert.
