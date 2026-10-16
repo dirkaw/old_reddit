@@ -12,7 +12,8 @@ extension (`web-ext-config.cjs` ignores `scripts/`).
 cd scripts/playwright
 npm install
 npx playwright install chromium firefox
-node stage-ext.mjs            # copies the extension's runtime files into ./ext
+node stage-ext.mjs            # copies the extension's runtime files into ./ext (Chromium manifest)
+node stage-ext.mjs ../.. ./ext-ff --firefox   # same, with the repo's Firefox manifest, for firefox*.mjs
 ```
 
 Re-run `stage-ext.mjs` after every source change. Reddit bot-challenges headless

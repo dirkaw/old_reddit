@@ -2,23 +2,20 @@
 //   dist/classic-layout-for-reddit-chrome-<version>.zip   (for the stores / releases)
 //   dist/chromium/                                        (the same files unpacked — point
 //                                                          "Load unpacked" here; gitignored)
-// Same files as the Firefox build, but its manifest drops the Firefox-only keys:
-// `background.scripts` (Firefox needs it to run background.js; Edge's store
-// rejects it outright in MV3 and Chrome only warns) and `browser_specific_settings`
-// (Gecko-only). Firefox keeps using the repo's manifest.json as-is via web-ext.
+// Same files as the Firefox build, but with the Chromium manifest (see
+// chromiumManifest in ext-files.mjs): background.service_worker instead of
+// background.scripts, and no browser_specific_settings. Firefox keeps using the
+// repo's manifest.json as-is via web-ext.
 //   node scripts/build-chromium-zip.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { EXT_FILES } from "./ext-files.mjs";
+import { EXT_FILES, chromiumManifest } from "./ext-files.mjs";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const manifest = JSON.parse(fs.readFileSync(path.join(repo, "manifest.json"), "utf8"));
-delete manifest.browser_specific_settings;
-if (manifest.background) delete manifest.background.scripts;
-if (!manifest.background || !manifest.background.service_worker) throw new Error("manifest has no background.service_worker");
+const manifest = chromiumManifest(JSON.parse(fs.readFileSync(path.join(repo, "manifest.json"), "utf8")));
 
 // Every local file the extension's pages reference must be in EXT_FILES — the popup
 // logo (icons/icon.svg) once went missing from the Chrome build this way.
