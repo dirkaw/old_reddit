@@ -36,6 +36,7 @@ xvfb-run -a -s "-screen 0 1600x1000x24" node <script> …
 | `media-checks.mjs <ext>` | A GIF post loops muted, the reCAPTCHA badge stays hidden, and a single-comment permalink shows just that thread with the infobar. |
 | `expand.mjs <ext> <out> <url> [n]` | Clicks the first *n* expandos (image, gallery, video) and screenshots them. |
 | `firefox.mjs <ext> <out> <listing> <thread>` | Installs the extension as a temporary add-on in Playwright's Firefox (over the Remote Debugging Protocol) and runs the listing, thread and load-more checks. |
+| `firefox-page.mjs <ext> <out> <url>` | Firefox (temporary add-on): what one page's post media actually rendered and whether each image/video loaded, plus a screenshot. |
 | `inspect-css.mjs <ext> <url> <selector>` | Lists every stylesheet in the rebuilt page and the rules that style one element. |
 | `css-timeline.mjs <ext> <out> <url>…` | Samples the page's `<style>`/`<link>` elements over time. This found new Reddit's CSS leaking in after the body swap. |
 | `offline.mjs <repo> <saved.html>…` | Runs the parsers exposed on `ORR_REBUILD` against saved HTML with no network: post types, dates, comment-tree integrity, sanitiser (spoilers, screen-reader text), packaged-MP4 video, and, by fixture file name, right-rail sidebars (`*right_rail*`) and stickies (`_r_<sub>_.html`). Exits non-zero on failure. |
@@ -54,6 +55,7 @@ xvfb-run -a -s "-screen 0 1600x1000x24" node <script> …
 | `probe10.mjs [sub]` | The right-rail sidebar partial (`/svc/shreddit/feeds/subreddit-right-rail?name=`); stickies exist only as `community-highlight-card`s on the sub page; `shreddit-player`'s `packaged-media-json` lists signed progressive MP4s (H.264 + AAC). |
 | `sweep.mjs <repo> <out> [maxThreads]` | Broad parser sweep: about 65 subreddits' listings plus a thread from each, run through `ORR_REBUILD`. Flags unknown post types, bodies or media in the raw HTML that weren't parsed, dropped comments, empty comment bodies and unhandled post attributes, and saves the raw HTML of anything flagged. Found `multi_media`, `gif`, `customPost`, crosspost bodies, `stickied`/`locked` and comment GIFs. |
 | `probe11.mjs [sub]` | NSFW logged out: listing partials and thread pages carry full data (`nsfw` + `subreddit-nsfw` attributes). Media sits in `shreddit-blurred-container`, with `slot="blurred"` (blur=40 previews) and `slot="revealed"` (the real thing). |
+| `probe12.mjs [user] [sub]` | Logged-out hover-card data: `/svc/shreddit/user-hover-card/<name>` (~8 KB: cake day, post + comment karma) and `/svc/shreddit/community-hover-card/<sub>` (~5 KB: description, weekly visitors and contributions), versus the 37–74 KB right-rail partial. |
 | `save.mjs <outdir> <path>…` | Saves raw HTML of Reddit paths (input for `offline.mjs`). |
 
 Saved HTML and screenshots are Reddit content and test output, so they're gitignored.
