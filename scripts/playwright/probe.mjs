@@ -1,5 +1,6 @@
 // Which Reddit data endpoints does a LOGGED-OUT browser get usable data from?
 // No extension loaded. node probe.mjs <sub>
+import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
 import { chromium } from "playwright";
 import fs from "node:fs";
 import os from "node:os";

@@ -1,4 +1,5 @@
 // Save raw HTML of given reddit paths (fetched same-origin from a logged-out page). node save.mjs <outdir> <path>...
+import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
 import { chromium } from "playwright";
 import fs from "node:fs";
 import os from "node:os";
@@ -18,7 +19,8 @@ await page.goto("https://www.reddit.com/r/pics/", { waitUntil: "domcontentloaded
 await page.waitForTimeout(2000);
 let i = 0;
 for (const p of paths) {
-  const r = await page.evaluate(async (u) => { const r = await fetch(u, { credentials: "include" }); return { status: r.status, ct: r.headers.get("content-type"), text: await r.text() }; }, p);
+  // ACCEPT_PARTIAL=1 asks for Reddit's partial rendering (what the extension fetches)
+  const r = await page.evaluate(async ([u, partial]) => { const r = await fetch(u, { credentials: "include", headers: partial ? { Accept: "text/vnd.reddit.partial+html, text/html;q=0.9" } : {} }); return { status: r.status, ct: r.headers.get("content-type"), text: await r.text() }; }, [p, process.env.ACCEPT_PARTIAL === "1"]);
   const f = path.join(OUT, String(i++).padStart(2, "0") + "-" + p.replace(/[^a-z0-9]+/gi, "_").slice(0, 80) + ".html");
   fs.writeFileSync(f, r.text);
   console.log(r.status, (r.ct || "").split(";")[0], r.text.length, f);

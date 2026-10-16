@@ -5,6 +5,7 @@
 //  4. thread → scroll to bottom → next page of top-level comments auto-loads
 //  5. CSS: no new-Reddit stylesheets left in the rebuilt page
 //   node interact.mjs <ext-dir> <out-dir> [sub]
+import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
 import { chromium } from "playwright";
 import fs from "node:fs";
 import os from "node:os";

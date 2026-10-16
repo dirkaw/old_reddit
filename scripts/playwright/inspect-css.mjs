@@ -1,5 +1,6 @@
 // Which stylesheets survive into the rebuilt page, and which rules style a given element?
 //   node inspect-css.mjs <ext-dir> <url> <css-selector>
+import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
 import { chromium } from "playwright";
 import fs from "node:fs";
 import os from "node:os";

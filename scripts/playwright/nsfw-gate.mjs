@@ -2,6 +2,7 @@
 // renders the listing in place (no new-Reddit reroute) and is remembered; a direct
 // NSFW thread in a fresh profile gets the post gate; media is the real (unblurred) one.
 //   node nsfw-gate.mjs <ext-dir> <out-dir> [sub]
+import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
 import { chromium } from "playwright";
 import fs from "node:fs";
 import os from "node:os";

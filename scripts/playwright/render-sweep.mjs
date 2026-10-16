@@ -2,6 +2,7 @@
 // rebuild, open every expando, and check what actually rendered — broken images,
 // videos that never load, media shown twice, empty bodies, page errors.
 //   node render-sweep.mjs <ext-dir> <out-dir> <url>...
+import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
 import { chromium } from "playwright";
 import fs from "node:fs";
 import os from "node:os";

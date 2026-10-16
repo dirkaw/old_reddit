@@ -1,4 +1,5 @@
 // Why is .json 403 logged-out, and where do comments come from on the HTML comments page?
+import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
 import { chromium } from "playwright";
 import fs from "node:fs";
 import os from "node:os";

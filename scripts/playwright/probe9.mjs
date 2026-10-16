@@ -1,4 +1,5 @@
 // more-comments partial: does render-mode=partial / the partial Accept type shrink the response?
+import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
 import { chromium } from "playwright";
 import fs from "node:fs";
 import os from "node:os";

@@ -1,5 +1,6 @@
 // Open the extension's own popup + options pages (chrome-extension://…) and check
 // every <img> on them actually loaded.   node popup-check.mjs <ext-dir> <out-dir>
+import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
 import { chromium } from "playwright";
 import fs from "node:fs";
 import os from "node:os";

@@ -1,4 +1,5 @@
 // Feed endpoints + per-post-type markup samples, logged-out. node probe6.mjs <outdir>
+import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
 import { chromium } from "playwright";
 import fs from "node:fs";
 import os from "node:os";

@@ -1,6 +1,7 @@
 // Offline check of the logged-out HTML parsers against saved Reddit HTML (no network).
 // Loads common.js + rebuild.js into a blank page and runs ORR_REBUILD's parsers.
 //   node offline.mjs <repo-dir> <saved.html>...
+import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
 import { chromium } from "playwright";
 import fs from "node:fs";
 import path from "node:path";

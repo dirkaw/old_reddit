@@ -2,6 +2,7 @@
 // Chromium profile and report how each Reddit URL renders.
 //   [HEADED=1] node run.mjs <ext-dir> <out-dir> <url> [<url> ...]
 // Results: <out-dir>/results.json (+ one screenshot per URL).
+import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
 import { chromium } from "playwright";
 import fs from "node:fs";
 import path from "node:path";

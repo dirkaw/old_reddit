@@ -1,6 +1,7 @@
 // PR #28 follow-ups, logged out: the subreddit right-rail partial (sidebar), where
 // stickies ("community highlights") come from, and whether a video's
 // packaged-media MP4s are fetchable.   node probe10.mjs [sub]
+import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
 import { chromium } from "playwright";
 import fs from "node:fs";
 import os from "node:os";

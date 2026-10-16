@@ -1,5 +1,6 @@
 // Dump the data a logged-out browser can parse out of Reddit's HTML:
 // shreddit-post attributes (listing + comments page) and shreddit-comment attributes.
+import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
 import { chromium } from "playwright";
 import fs from "node:fs";
 import os from "node:os";

@@ -1,4 +1,5 @@
 // Expand the first few expandos on a listing and screenshot (logged-out).  node expand.mjs <ext> <out> <url> [n]
+import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
 import { chromium } from "playwright";
 import fs from "node:fs"; import os from "node:os"; import path from "node:path";
 const [extDir, out, url, n = "2"] = process.argv.slice(2);

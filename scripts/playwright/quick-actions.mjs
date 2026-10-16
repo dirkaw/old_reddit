@@ -2,6 +2,7 @@
 // icons hidden until the post is hovered; filter → hide + toast + undo; tag → badge, with
 // the same icon/badge order before and after a reload; hover cards with real data;
 // comments page: tag icons only.   node quick-actions.mjs <ext-dir> <out-dir>
+import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
 import { chromium } from "playwright";
 import fs from "node:fs";
 import os from "node:os";

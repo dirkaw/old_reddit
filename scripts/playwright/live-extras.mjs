@@ -1,6 +1,7 @@
 // Live logged-out check: stickies (green, on top) + right-rail sidebar on a sub, and inline
 // v.redd.it playback with audio from the packaged MP4.
 //   node live-extras.mjs <ext> <out> <sub> <videoSub>
+import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
 import { chromium } from "playwright"; import fs from "node:fs"; import os from "node:os"; import path from "node:path";
 const [extDir, out, sub, vsub] = process.argv.slice(2);
 fs.mkdirSync(out, { recursive: true });

@@ -1,4 +1,5 @@
 // Can a same-origin fetch() get the comment tree HTML (as a content script would)?
+import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
 import { chromium } from "playwright";
 import fs from "node:fs";
 import os from "node:os";

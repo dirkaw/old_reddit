@@ -1,5 +1,6 @@
 // Sample the sidebar labels and every <style>/<link> in the page at 3s and 6s after load
 // (found new-Reddit CSS leaking into the rebuilt page).  node css-timeline.mjs <ext-dir> <out-dir> <url>...
+import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
 import { chromium } from "playwright";
 import fs from "node:fs"; import os from "node:os"; import path from "node:path";
 const [extDir, out, ...urls] = process.argv.slice(2);

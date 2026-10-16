@@ -3,6 +3,7 @@
 // where the parsed data misses something the raw HTML has.
 //   node sweep.mjs <repo> <out-dir> [maxThreads]
 // Writes <out-dir>/sweep.json (all findings) and saves flagged raw HTML for repro.
+import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
 import { chromium } from "playwright";
 import fs from "node:fs";
 import os from "node:os";

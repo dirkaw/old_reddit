@@ -1,5 +1,6 @@
 // Logged out: does an NSFW subreddit's listing partial + thread page carry real data
 // (post, media, comments), or a gated stub?   node probe11.mjs [sub]
+import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
 import { chromium } from "playwright";
 import fs from "node:fs";
 import os from "node:os";

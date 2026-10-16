@@ -1,6 +1,7 @@
 // Logged out: Reddit's own hover-card partials vs the right-rail partial — size and
 // what data they carry (for logged-out user/subreddit hover cards).
 //   node probe12.mjs [user] [sub]
+import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
 import { chromium } from "playwright";
 import fs from "node:fs";
 import os from "node:os";

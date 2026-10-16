@@ -1,5 +1,6 @@
 // Live logged-out checks: a GIF post loops (muted), the reCAPTCHA badge is hidden, and a
 // single-comment permalink shows just that thread with the infobar.   node media-checks.mjs <ext-dir>
+import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
 import { chromium } from "playwright"; import fs from "node:fs"; import os from "node:os"; import path from "node:path";
 const [extDir] = process.argv.slice(2);
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), "orr-pw-"));

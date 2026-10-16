@@ -2,6 +2,7 @@
 // and report what a page's post media actually rendered — images/videos/iframes in
 // the post (incl. its expando), and whether each loaded.
 //   node firefox-page.mjs <ext-dir> <out-dir> <url>
+import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
 import { firefox } from "playwright";
 import net from "node:net";
 import fs from "node:fs";

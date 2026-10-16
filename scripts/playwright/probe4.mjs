@@ -1,4 +1,5 @@
 // Comments page (logged-out): where do comments come from and what do they carry?
+import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
 import { chromium } from "playwright";
 import fs from "node:fs";
 import os from "node:os";

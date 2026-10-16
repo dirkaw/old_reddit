@@ -2,6 +2,7 @@
 // (via the Remote Debugging Protocol) into Playwright's Firefox, then load a
 // listing + a thread and click a "load more comments" stub.
 //   node firefox.mjs <ext-dir> <out-dir> <listing-url> <thread-url>
+import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
 import { firefox } from "playwright";
 import net from "node:net";
 import fs from "node:fs";
