@@ -216,13 +216,15 @@ attributes) and maps it onto the JSON shape the renderer expects.
 **Honest limitations (please read):**
 
 - **Logged out works, with less.** Subreddit listings (every sort and time
-  filter, stickies on top), the front page, r/popular, and comment threads
+  filter, stickies on top), the front page, r/popular, user profiles, and comment threads
   (including "load more comments") all rebuild without an account, and v.redd.it
   videos play inline with sound. The sidebar shows new Reddit's community widgets
   (rules, bookmarks, …) rather than old Reddit's sidebar text, and stickies show
-  without a post time or author. User profiles, search, wiki pages, r/all,
-  multireddits and combined `r/a+b` listings have no logged-out data source, so
-  those fall back to normal Reddit. Adult (NSFW) communities and posts first show
+  without a post time or author. User profiles work too (overview, submitted and
+  comments, every sort, with karma and cake day in the sidebar). Search, wiki pages,
+  a profile's private tabs (saved, upvoted…), r/all, multireddits and combined
+  `r/a+b` listings have no logged-out data source, so those fall back to normal
+  Reddit. Adult (NSFW) communities and posts first show
   old reddit's "over 18?" page: one click on **continue**, remembered on that device. Anything that fails **falls back** to letting
   normal Reddit render — it never leaves the page blank.
 - **Read-only.** Voting, saving, posting, and commenting are **not** wired up (they

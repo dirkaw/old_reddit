@@ -21,8 +21,13 @@ browsers, so run headed under a virtual display. Also, IPv6 to reddit timed out 
 the dev machine; Chromium falls back to IPv4 on its own.
 
 ```bash
-xvfb-run -a -s "-screen 0 1600x1000x24" node <script> …
+env -u WAYLAND_DISPLAY xvfb-run -a -s "-screen 0 1600x1000x24" node <script> …
 ```
+
+On a Wayland desktop, `xvfb-run` alone isn't enough: it only swaps `DISPLAY`, so
+browsers pick up `WAYLAND_DISPLAY` and open real windows on your screen. Every
+script imports `hidden-display.mjs` first, which drops the Wayland variables, and
+the `env -u` above does the same. New scripts should import it too.
 
 ## Verification scripts (load the extension)
 
@@ -35,6 +40,7 @@ xvfb-run -a -s "-screen 0 1600x1000x24" node <script> …
 | `nsfw-gate.mjs <ext> <out> [sub]` | Logged-out over-18 gate: an adult sub shows old reddit's interstitial; **continue** renders the listing in place (no reroute) and is remembered across navigation and reloads; a direct NSFW thread in a fresh profile gets the post gate; expanded media is the real source, not Reddit's `blur=40` preview; "no thank you" goes to the front page. Exits non-zero on failure. |
 | `popup-check.mjs <ext> <out>` | Opens the extension's own popup and options pages and checks every image on them loaded (the popup logo was once missing from the Chrome build). |
 | `quick-actions.mjs <ext> <out>` | Tagline filter/tag icons (PR #29 + follow-up), live and logged out: hidden until hover, filter → hide + toast + undo, tag → badge with stable icon order across reloads, logged-out hover cards with karma/cake day and weekly visitors, tag-only icons on comment pages. Exits non-zero on failure. |
+| `user-pages.mjs <ext> <out> [user]` | Logged-out user profiles in the old layout: overview (posts + comments "on <post> in r/sub"), submitted, comments sorted by top, the karma and cake-day sidebar, infinite scroll without duplicates, clicking a listing author, and a profile whose posts are hidden (old layout plus a message). Exits non-zero on failure. |
 | `media-checks.mjs <ext>` | A GIF post loops muted, the reCAPTCHA badge stays hidden, and a single-comment permalink shows just that thread with the infobar. |
 | `expand.mjs <ext> <out> <url> [n]` | Clicks the first *n* expandos (image, gallery, video) and screenshots them. |
 | `firefox.mjs <ext> <out> <listing> <thread>` | Installs the extension as a temporary add-on in Playwright's Firefox (over the Remote Debugging Protocol) and runs the listing, thread and load-more checks. |
@@ -58,7 +64,9 @@ xvfb-run -a -s "-screen 0 1600x1000x24" node <script> …
 | `sweep.mjs <repo> <out> [maxThreads]` | Broad parser sweep: about 65 subreddits' listings plus a thread from each, run through `ORR_REBUILD`. Flags unknown post types, bodies or media in the raw HTML that weren't parsed, dropped comments, empty comment bodies and unhandled post attributes, and saves the raw HTML of anything flagged. Found `multi_media`, `gif`, `customPost`, crosspost bodies, `stickied`/`locked` and comment GIFs. |
 | `probe11.mjs [sub]` | NSFW logged out: listing partials and thread pages carry full data (`nsfw` + `subreddit-nsfw` attributes). Media sits in `shreddit-blurred-container`, with `slot="blurred"` (blur=40 previews) and `slot="revealed"` (the real thing). |
 | `probe12.mjs [user] [sub]` | Logged-out hover-card data: `/svc/shreddit/user-hover-card/<name>` (~8 KB: cake day, post + comment karma) and `/svc/shreddit/community-hover-card/<sub>` (~5 KB: description, weekly visitors and contributions), versus the 37–74 KB right-rail partial. |
-| `save.mjs <outdir> <path>…` | Saves raw HTML of Reddit paths (input for `offline.mjs`). |
+| `probe13.mjs <out> [user]` | Logged-out profiles: the page HTML has only ~8 items, but the feed partials `/svc/shreddit/profiles/profile_{overview,posts,comments}-more-posts/…` serve 25 at a time (`shreddit-post` + `shreddit-profile-comment`), with no bot check. |
+| `probe14.mjs [user]` | Profile feed paging (`after=base64(fullname)`) and sorting. Sorting is a query parameter (`&sort=top&t=all`); the path segment is ignored. |
+| `save.mjs <outdir> <path>…` | Saves raw HTML of Reddit paths (input for `offline.mjs`). `ACCEPT_PARTIAL=1` requests Reddit's partial rendering, like the extension does. |
 
 Saved HTML and screenshots are Reddit content and test output, so they're gitignored.
 Capture fresh samples with `save.mjs` when needed.

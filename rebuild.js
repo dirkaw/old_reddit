@@ -593,7 +593,7 @@
       `<div class="content" role="main"><div class="interstitial">` +
       `<img class="interstitial-image" src="https://www.redditstatic.com/interstitial-image-over18.png" alt="over 18" height="150" width="150">` +
       `<div class="interstitial-message md-container"><div class="md">` +
-      `<h3>You must be 18+ to view this ${opts.post ? "post" : "community"}</h3>` +
+      `<h3>You must be 18+ to view this ${opts.what || (opts.post ? "post" : "community")}</h3>` +
       `<p>You must be at least eighteen years old to view this content. Are you over eighteen and willing to see adult content?</p>` +
       `</div></div>` +
       `<div class="buttons"><a href="/" class="c-btn c-btn-primary">no thank you</a>` +
@@ -824,7 +824,7 @@
       `<div class="content" role="main">` +
       userSortMenuHtml(route, opts.sort, opts.t) +
       `<div id="siteTable" class="sitetable">` +
-      (items || '<div class="thing">Nothing here.</div>') +
+      (items || `<div class="thing">${esc((json && json.orr_emptyText) || "Nothing here.")}</div>`) +
       `</div>` +
       navButtonsHtml({ basePath: route.basePath }, listing, count, null, navExtra) +
       `</div>`;
@@ -1053,7 +1053,7 @@
     userTabmenuHtml, buildUserComment, buildUserPage, buildUserSidebar,
     meIdentity, userbarLoggedIn, userbarLoggedOut, srBarHtml, searchFormHtml, sideSearchHtml, buildHeader,
     searchJsonUrl, searchHref, buildSearchPage, buildWikiPage,
-    parseHtmlDoc, cleanMd, isoToUtc, postFromShreddit, commentsFromHtml, htmlListingPath,
+    parseHtmlDoc, cleanMd, isoToUtc, postFromShreddit, commentsFromHtml, htmlListingPath, profileCommentFromShreddit, htmlUserPath,
     packagedMp4, stickiesFromHtml, railFromHtml, buildRailSidebar, buildAgeGate, userHoverFromHtml, subHoverFromHtml, parseCount,
   };
 
@@ -4238,6 +4238,92 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     ];
   }
 
+  // ---- logged-out user profiles: Reddit's profile feed partials ----
+  // overview / submitted / comments each have a feed (25 per page, after=base64
+  // fullname, like listings). Sorting is a query param — the path segment is ignored.
+  // The private sections (saved, upvoted…) need a login, so they stay native.
+  const PROFILE_FEEDS = { overview: "profile_overview-more-posts", submitted: "profile_posts-more-posts", comments: "profile_comments-more-posts" };
+  function htmlUserPath(ur, sort, t, after) {
+    const feed = PROFILE_FEEDS[ur.section];
+    if (!feed || !/^[A-Za-z0-9_-]+$/.test(ur.name || "")) return null;
+    const s = sort || "new";
+    const q = new URLSearchParams({ name: ur.name, sort: s });
+    if (t && (s === "top" || s === "controversial")) q.set("t", t);
+    if (after) q.set("after", btoa(after));
+    return `/svc/shreddit/profiles/${feed}/${encodeURIComponent(s)}/?` + q.toString();
+  }
+
+  // One <shreddit-profile-comment> → the t1 `data` a user page's .json would carry.
+  function profileCommentFromShreddit(el) {
+    const id = el.getAttribute("comment-id") || "";
+    if (!/^t1_/.test(id)) return null;
+    const title = el.querySelector("h2 a[href]");
+    const subA = Array.from(el.querySelectorAll("a[href^='/r/']")).find((a) => /^\/r\/[^/]+\/?$/.test(a.getAttribute("href")));
+    const userA = el.querySelector("a[href^='/user/']");
+    const um = userA && /^\/user\/([^/?#]+)/.exec(userA.getAttribute("href"));
+    const row = el.querySelector("shreddit-comment-action-row[score]");
+    const score = row ? parseInt(row.getAttribute("score"), 10) : NaN;
+    const ts = el.querySelector("faceplate-timeago[ts]");
+    const body = el.querySelector("[id$='-post-rtjson-content']");
+    const post = el.querySelector("[post-id^='t3_']");
+    const html = body ? cleanMd(body) : "";
+    return {
+      name: id, id: id.slice(3), author: um ? um[1] : "[deleted]",
+      score: isNaN(score) ? 0 : score, score_hidden: isNaN(score),
+      created_utc: ts ? isoToUtc(ts.getAttribute("ts")) : 0,
+      permalink: el.getAttribute("href") || "",
+      link_title: title ? title.textContent.replace(/\s+/g, " ").trim() : "",
+      link_permalink: title ? title.getAttribute("href") || "" : "",
+      link_id: post ? post.getAttribute("post-id") : "",
+      subreddit: subA ? subA.getAttribute("href").split("/")[2] : "",
+      body_html: html ? `<div class="md">${html}</div>` : "",
+    };
+  }
+
+  async function fetchUserHtml(ur, sort, t, after) {
+    const path = htmlUserPath(ur, sort, t, after);
+    if (!path) {
+      const err = new Error("no logged-out source for this profile section");
+      err.status = 403;
+      throw err;
+    }
+    const key = "html:" + path;
+    const hit = cache.get(key);
+    if (hit && Date.now() - hit.t < CACHE_TTL) return hit.json;
+    const doc = await fetchHtmlDoc(path);
+    const children = [];
+    doc.querySelectorAll("shreddit-post, shreddit-profile-comment").forEach((el) => {
+      if (el.tagName.toLowerCase() === "shreddit-post") {
+        if (el.parentElement && el.parentElement.closest("shreddit-post")) return; // a crosspost's embedded original
+        const d = postFromShreddit(el);
+        if (d) children.push({ kind: "t3", data: d });
+      } else {
+        const d = profileCommentFromShreddit(el);
+        if (d) children.push({ kind: "t1", data: d });
+      }
+    });
+    let emptyText = "";
+    if (!children.length && !after) {
+      // Nothing to show: either the account keeps its posts hidden / hasn't posted, or
+      // it doesn't exist. The (cheap) hover card tells them apart — a real account
+      // still gets the old-layout profile with its stats; a missing one gets Reddit's
+      // own "nobody on Reddit goes by that name" page.
+      if (!(await hoverPartial("user", ur.name))) {
+        const err = new Error("no such user");
+        err.status = 404;
+        throw err;
+      }
+      emptyText = `there doesn't seem to be anything here — u/${ur.name} may keep their posts hidden`;
+    }
+    const last = children.length ? children[children.length - 1].data.name : null;
+    const next = last && doc.querySelector("faceplate-partial[src*='more-posts'][src*='after=']") ? last : null;
+    const posts = children.filter((c) => c.kind === "t3");
+    const adult = !after && posts.length > 0 && posts.filter((c) => c.data.over_18).length * 2 >= posts.length;
+    const json = { kind: "Listing", data: { children, after: next, before: null }, orr_adult: adult, orr_emptyText: emptyText };
+    cache.set(key, { json, t: Date.now() });
+    return json;
+  }
+
   // Logged out, adult (NSFW) communities and posts sit behind a one-click "over 18?"
   // gate, like old reddit's interstitial (logged in, Reddit applies the account's
   // own setting). The answer is remembered on this device.
@@ -4258,9 +4344,9 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     try { api.storage.local.set({ over18: true }); } catch (e) { /* this page still proceeds */ }
   }
   // Show the gate in place of the page; `proceed` renders the already-fetched page.
-  function showAgeGate(sub, isPost, proceed) {
+  function showAgeGate(sub, isPost, proceed, what) {
     active = true; // before replaceBody(): see loadListing's comment on why
-    replaceBody(buildAgeGate({ sub, post: isPost, me: meCached }), "over 18? — old reddit");
+    replaceBody(buildAgeGate({ sub, post: isPost, what, me: meCached }), "over 18? — old reddit");
     patchHeader();
     const yes = document.querySelector(".orr-over18-yes");
     if (yes) yes.addEventListener("click", () => {
@@ -4613,21 +4699,30 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     if (firstLoad) watchdog = setTimeout(() => { if (!active) unhideGuard(); }, 8000);
     let json;
     try {
-      const q = new URLSearchParams({ raw_json: "1", limit: "25" });
-      if (sort) q.set("sort", sort);
-      if (t) q.set("t", t);
-      if (params.after) {
-        q.set("after", params.after);
-        q.set("count", params.count || "25");
+      if (jsonBlocked) {
+        json = await fetchUserHtml(ur, sort, t, params.after);
+      } else {
+        const q = new URLSearchParams({ raw_json: "1", limit: "25" });
+        if (sort) q.set("sort", sort);
+        if (t) q.set("t", t);
+        if (params.after) {
+          q.set("after", params.after);
+          q.set("count", params.count || "25");
+        }
+        const jsonUrl = location.origin + ur.basePath + "/.json?" + q.toString();
+        const res = await redditFetch(jsonUrl);
+        if (isJsonBlock(res)) {
+          jsonBlocked = true; // logged out → Reddit's profile feed partials
+          json = await fetchUserHtml(ur, sort, t, params.after);
+        } else {
+          if (!res.ok) {
+            const e = new Error("HTTP " + res.status);
+            e.status = res.status;
+            throw e;
+          }
+          json = await res.json();
+        }
       }
-      const jsonUrl = location.origin + ur.basePath + "/.json?" + q.toString();
-      const res = await redditFetch(jsonUrl);
-      if (!res.ok) {
-        const e = new Error("HTTP " + res.status);
-        e.status = res.status;
-        throw e;
-      }
-      json = await res.json();
     } catch (err) {
       if (watchdog) clearTimeout(watchdog);
       if (firstLoad) {
@@ -4640,6 +4735,16 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     }
     if (watchdog) clearTimeout(watchdog);
     await ensureCss();
+    if (json.orr_adult && !(await over18Confirmed())) {
+      // logged-out profile that's mostly adult posts: the same one-click "over 18?" gate
+      showAgeGate(null, false, () => renderUser(ur, json, params, sort, t), "profile");
+      unhideGuard();
+      return;
+    }
+    renderUser(ur, json, params, sort, t);
+  }
+
+  function renderUser(ur, json, params, sort, t) {
     const startCount = params.after ? parseInt(params.count || "25", 10) : 0;
     active = true; // before replaceBody(): see loadListing's comment on why
     replaceBody(buildUserPage(ur, json, { startCount, me: meCached, sort, t }), "u/" + ur.name + " — old reddit");
@@ -4651,13 +4756,19 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     const c0 = startCount + (l0.children || []).length;
     setupInfinite(
       async (after, count) => {
-        const q = new URLSearchParams({ raw_json: "1", limit: "25", after, count: String(count) });
-        if (sort) q.set("sort", sort);
-        if (t) q.set("t", t);
-        const r2 = await redditFetch(location.origin + ur.basePath + "/.json?" + q.toString());
-        if (!r2.ok) { const e = new Error("HTTP " + r2.status); e.status = r2.status; e.retryAfter = retryAfterOf(r2); throw e; }
-        const j2 = await r2.json();
-        const kids = ((j2 && j2.data) || {}).children || [];
+        let j2;
+        if (jsonBlocked) {
+          j2 = await fetchUserHtml(ur, sort, t, after);
+        } else {
+          const q = new URLSearchParams({ raw_json: "1", limit: "25", after, count: String(count) });
+          if (sort) q.set("sort", sort);
+          if (t) q.set("t", t);
+          const r2 = await redditFetch(location.origin + ur.basePath + "/.json?" + q.toString());
+          if (!r2.ok) { const e = new Error("HTTP " + r2.status); e.status = r2.status; e.retryAfter = retryAfterOf(r2); throw e; }
+          j2 = await r2.json();
+        }
+        // (skip anything already on the page — the feed can shift between pages)
+        const kids = (((j2 && j2.data) || {}).children || []).filter((c) => !c.data || !document.getElementById("thing_" + c.data.name));
         const html = kids
           .map((c, i) => {
             if (c.kind === "t3") return buildItem(c.data, { rank: count + 1 + i, odd: (count + i) % 2 === 0, showSub: true, expandoButton: true });
@@ -4673,12 +4784,19 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   }
 
   async function loadUserSidebar(name) {
+    const side = document.querySelector(".side"); // this page's — a later nav swaps the body
     try {
-      const res = await redditFetch(location.origin + "/user/" + encodeURIComponent(name) + "/about.json?raw_json=1");
-      if (!res.ok) return;
-      const about = await res.json();
-      const side = document.querySelector(".side");
-      if (side && about && about.data) side.insertAdjacentHTML("beforeend", buildUserSidebar(about));
+      let about = null;
+      if (jsonBlocked) {
+        // logged out: about.json is blocked; the user hover-card partial has the same basics
+        const h = await hoverPartial("user", name);
+        if (h) about = { data: { name: h.name || name, link_karma: h.postKarma, comment_karma: h.commentKarma, created_utc: h.created } };
+      } else {
+        const res = await redditFetch(location.origin + "/user/" + encodeURIComponent(name) + "/about.json?raw_json=1");
+        if (!res.ok) return;
+        about = await res.json();
+      }
+      if (side && side.isConnected && about && about.data) side.insertAdjacentHTML("beforeend", buildUserSidebar(about));
     } catch (e) {
       /* ignore */
     }
