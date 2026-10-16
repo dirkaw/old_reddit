@@ -1355,7 +1355,15 @@ a.expand { color:#888; text-decoration:none; font-family:monospace; cursor:point
   border:none; border-radius:4px; padding:4px 9px; font-size:18px; line-height:1.5; cursor:pointer; display:none; }
 #orr-mute-all:hover { background:rgba(0,0,0,.82); }
 #orr-mute-all.show { display:block; }
-.orr-usertag { display:inline-block; padding:0 4px; margin:0 2px; border-radius:3px; font-size:10px; color:#fff; vertical-align:middle; }
+.orr-usertag { display:inline-block; padding:0 4px; margin:0 2px; border-radius:3px; font-size:10px; line-height:normal; color:#fff; vertical-align:baseline; }
+/* quick filter/tag actions next to a tagline's author / "to r/sub" link (styled like "locked") */
+a.orr-qa { margin-left:5px; color:#888; text-decoration:none; white-space:nowrap; cursor:pointer; }
+a.orr-qa:hover { color:#555; text-decoration:underline; }
+a.orr-qa svg { width:11px; height:11px; vertical-align:-2px; }
+a.orr-qa .orr-qa-icon { font-size:13px; line-height:1; vertical-align:-1px; }
+#orr-toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); z-index:2147483000; max-width:90vw;
+  padding:8px 14px; border-radius:4px; background:#333; color:#fff; font:13px verdana,arial,sans-serif; box-shadow:0 2px 10px rgba(0,0,0,.3); }
+#orr-toast a { color:#8cf; font-weight:bold; margin-left:10px; cursor:pointer; }
 #orr-hovercard { position:fixed; z-index:2147483000; max-width:320px; background:#fff; color:#000; border:1px solid #5f99cf;
   border-radius:3px; padding:8px; font:11px verdana; box-shadow:0 2px 10px rgba(0,0,0,.35); line-height:1.5; }
 #orr-hovercard .orr-tagbtn, #orr-hovercard .orr-favbtn, #orr-hovercard .orr-filterbtn { color:#369; cursor:pointer; text-decoration:underline; }
@@ -1948,6 +1956,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         a.insertAdjacentElement("afterend", span);
       }
     });
+    addQuickActions(root);
   }
   function promptTag(username) {
     const key = username.toLowerCase();
@@ -1975,18 +1984,140 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     patchSrBar();
     hideHoverCard();
   }
-  function toggleFilterSub(sub) {
-    if (!sub) return;
-    const key = sub.toLowerCase();
+  // kind: "subreddits" or "users" (the Options page's filter lists).
+  function isFiltered(kind, name) {
+    const key = String(name || "").toLowerCase();
+    return ((dataCache.filters && dataCache.filters[kind]) || []).some((s) => s && s.toLowerCase() === key);
+  }
+  function toggleFilter(kind, name, quiet) {
+    if (!name) return;
+    const key = name.toLowerCase();
     if (!dataCache.filters) dataCache.filters = { subreddits: [], users: [], domains: [], keywords: [], flairs: [], highlights: [] };
-    const list = (dataCache.filters.subreddits || []).filter(Boolean);
+    const list = (dataCache.filters[kind] || []).filter(Boolean);
     const idx = list.findIndex((s) => s.toLowerCase() === key);
-    if (idx >= 0) list.splice(idx, 1);
-    else list.push(sub);
-    dataCache.filters.subreddits = list;
+    const nowFiltered = idx < 0;
+    if (nowFiltered) list.push(name);
+    else list.splice(idx, 1);
+    dataCache.filters[kind] = list;
     ORR.setPrefs({ filters: dataCache.filters });
     applyFilters(document);
+    refreshQaTitles(kind, name);
     hideHoverCard();
+    if (quiet) return;
+    const label = (kind === "users" ? "u/" : "r/") + name;
+    const msg = nowFiltered
+      ? `${label} is filtered — ${kind === "users" ? "their" : "its"} posts are hidden.`
+      : `${label} is no longer filtered.`;
+    showToast(msg, () => toggleFilter(kind, name, true));
+  }
+
+  let toastTimer = null;
+  function showToast(text, onUndo) {
+    let t = document.getElementById("orr-toast");
+    if (!t) {
+      t = document.createElement("div");
+      t.id = "orr-toast";
+      t.setAttribute("role", "status");
+      t.setAttribute("aria-live", "polite");
+      document.body.appendChild(t);
+    }
+    t.textContent = text;
+    if (onUndo) {
+      const u = document.createElement("a");
+      u.href = "#";
+      u.textContent = "undo";
+      u.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        hideToast();
+        onUndo();
+      });
+      t.appendChild(u);
+    }
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(hideToast, 8000);
+  }
+  function hideToast() {
+    clearTimeout(toastTimer);
+    const t = document.getElementById("orr-toast");
+    if (t) t.remove();
+  }
+
+  // Small icons after a tagline's "to r/sub" and author links: filter the sub or
+  // user (listing posts only — filters don't apply to comments or to the post
+  // a comments page is about), and tag the user.
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  function blockIcon() {
+    const svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("viewBox", "0 0 16 16");
+    svg.setAttribute("aria-hidden", "true");
+    const c = document.createElementNS(SVG_NS, "circle");
+    [["cx", "8"], ["cy", "8"], ["r", "6.5"], ["fill", "none"], ["stroke", "#d93025"], ["stroke-width", "2"]].forEach(([k, v]) => c.setAttribute(k, v));
+    const l = document.createElementNS(SVG_NS, "line");
+    [["x1", "3.4"], ["y1", "3.4"], ["x2", "12.6"], ["y2", "12.6"], ["stroke", "#d93025"], ["stroke-width", "2"]].forEach(([k, v]) => l.setAttribute(k, v));
+    svg.append(c, l);
+    return svg;
+  }
+  function qaTitle(action, kind, name) {
+    if (action === "tag") return `Tag u/${name}: add a label shown next to their name`;
+    const label = (kind === "users" ? "u/" : "r/") + name;
+    const whose = kind === "users" ? "their" : "its";
+    return isFiltered(kind, name)
+      ? `Unfilter ${label}: show ${whose} posts in your listings again`
+      : `Filter ${label}: hide ${whose} posts from your listings (undo in Options → Filters)`;
+  }
+  function qaLink(action, kind, name) {
+    const a = document.createElement("a");
+    a.href = "#";
+    a.className = "orr-qa";
+    a.setAttribute("role", "button");
+    a.dataset.qa = action;
+    a.dataset.qaKind = kind;
+    a.dataset.qaName = name;
+    a.title = qaTitle(action, kind, name);
+    a.setAttribute("aria-label", a.title);
+    if (action === "filter") a.appendChild(blockIcon());
+    else {
+      const i = document.createElement("span");
+      i.className = "orr-qa-icon";
+      i.setAttribute("aria-hidden", "true");
+      i.textContent = "\u{1F3F7}\uFE0F";
+      a.appendChild(i);
+    }
+    return a;
+  }
+  // After a filter toggle, update the tooltip on every filter icon for that name.
+  function refreshQaTitles(kind, name) {
+    const key = name.toLowerCase();
+    document.querySelectorAll('a.orr-qa[data-qa="filter"]').forEach((a) => {
+      if (a.dataset.qaKind !== kind || (a.dataset.qaName || "").toLowerCase() !== key) return;
+      a.title = qaTitle("filter", kind, name);
+      a.setAttribute("aria-label", a.title);
+    });
+  }
+  function addQuickActions(scope) {
+    const root = scope && scope.querySelectorAll ? scope : document;
+    const onComments = !!document.querySelector(".commentarea");
+    const ur = ORR.isUserRoute(location);
+    const profileUser = ur ? ur.name.toLowerCase() : "";
+    root.querySelectorAll(".tagline a.author, .tagline a.subreddit").forEach((a) => {
+      if (a.dataset.orrQa) return;
+      a.dataset.orrQa = "1";
+      const isSub = a.classList.contains("subreddit");
+      const m = (isSub ? /^\/r\/([^/?#+]+)/ : /\/user\/([^/?#]+)/).exec(a.getAttribute("href") || "");
+      if (!m || m[1].charAt(0) === "[") return; // [deleted]
+      const name = m[1];
+      const filterable = !onComments && !!a.closest(".thing.link");
+      const out = [];
+      if (isSub) {
+        if (filterable) out.push(qaLink("filter", "subreddits", name));
+      } else {
+        if (filterable && name.toLowerCase() !== profileUser) out.push(qaLink("filter", "users", name));
+        out.push(qaLink("tag", "users", name));
+      }
+      let at = a;
+      out.forEach((el) => { at.insertAdjacentElement("afterend", el); at = el; });
+    });
   }
 
   // ---- filters + highlights ----
@@ -2426,27 +2557,37 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     const url = um
       ? location.origin + "/user/" + um[1] + "/about.json?raw_json=1"
       : location.origin + "/r/" + sm[1] + "/about.json?raw_json=1";
-    const j = await fetchJsonCached(url);
-    if (!j || !j.data) return;
-    const d = j.data;
+    // Logged out, about.json is blocked: show what's still available (a sub's
+    // sidebar header) plus the actions, rather than no card at all.
+    const j = jsonBlocked ? null : await fetchJsonCached(url);
+    const d = j && j.data;
+    if (!d && !jsonBlocked) return;
     let html;
     if (um) {
-      const name = d.name || um[1];
-      const cake = d.created_utc ? new Date(d.created_utc * 1000).toISOString().slice(0, 10) : "?";
+      const name = (d && d.name) || um[1];
+      const stats = d
+        ? `<br>${formatNumber(d.link_karma)} post &middot; ${formatNumber(d.comment_karma)} comment karma` +
+          `<br>cake day ${esc(d.created_utc ? new Date(d.created_utc * 1000).toISOString().slice(0, 10) : "?")}`
+        : "";
       html =
-        `<b>u/${esc(name)}</b><br>${formatNumber(d.link_karma)} post &middot; ${formatNumber(d.comment_karma)} comment karma` +
-        `<br>cake day ${esc(cake)}<br><span class="orr-tagbtn" data-tag-user="${esc(name)}">tag user</span>`;
+        `<b>u/${esc(name)}</b>${stats}` +
+        `<br><span class="orr-tagbtn" data-tag-user="${esc(name)}">tag user</span>` +
+        ` &middot; <span class="orr-filterbtn" data-filter-kind="users" data-filter-name="${esc(name)}">${isFiltered("users", name) ? "un-filter user" : "filter user"}</span>`;
     } else {
-      const subName = d.display_name || sm[1];
+      const rail = d ? null : await fetchRail(sm[1]);
+      const subName = (d && d.display_name) || (rail && rail.name) || sm[1];
       const subKey = subName.toLowerCase();
       const isFav = (dataCache.favoriteSubs || []).some((s) => s && s.toLowerCase() === subKey);
-      const isFiltered = ((dataCache.filters && dataCache.filters.subreddits) || []).some((s) => s && s.toLowerCase() === subKey);
+      const count = d ? `${formatNumber(d.subscribers)} subscribers`
+        : rail && rail.weeklyVisitors != null ? `${formatNumber(rail.weeklyVisitors)} weekly visitors` : "";
+      const desc = (d ? d.public_description : rail && rail.description) || "";
       html =
-        `<b>r/${esc(subName)}</b><br>${formatNumber(d.subscribers)} subscribers` +
-        (d.public_description ? `<br>${esc(d.public_description).slice(0, 240)}` : "") +
+        `<b>r/${esc(subName)}</b>` + (count ? `<br>${count}` : "") +
+        (desc ? `<br>${esc(desc.slice(0, 240))}` : "") +
         `<br><span class="orr-favbtn" data-fav-sub="${esc(subName)}">${isFav ? "remove from favorites" : "add to favorites"}</span>` +
-        ` &middot; <span class="orr-filterbtn" data-filter-sub="${esc(subName)}">${isFiltered ? "un-filter" : "filter this subreddit"}</span>`;
+        ` &middot; <span class="orr-filterbtn" data-filter-kind="subreddits" data-filter-name="${esc(subName)}">${isFiltered("subreddits", subName) ? "un-filter" : "filter this subreddit"}</span>`;
     }
+    if (!anchor.isConnected || !anchor.matches(":hover")) return; // pointer left while fetching
     card.innerHTML = html;
     positionCard(card, anchor);
     card.style.display = "block";
@@ -4935,6 +5076,16 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
           galleryNav(gnav);
           return;
         }
+        // Quick filter/tag icons in a tagline.
+        const qa = e.target.closest && e.target.closest("a.orr-qa");
+        if (qa) {
+          e.preventDefault();
+          e.stopPropagation();
+          const name = qa.dataset.qaName || "";
+          if (qa.dataset.qa === "tag") promptTag(name);
+          else toggleFilter(qa.dataset.qaKind, name);
+          return;
+        }
         // Tag-user link (inside a hover card).
         const tagBtn = e.target.closest && e.target.closest(".orr-tagbtn");
         if (tagBtn) {
@@ -4955,7 +5106,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         if (filterBtn) {
           e.preventDefault();
           e.stopPropagation();
-          toggleFilterSub(filterBtn.getAttribute("data-filter-sub") || "");
+          toggleFilter(filterBtn.getAttribute("data-filter-kind") || "subreddits", filterBtn.getAttribute("data-filter-name") || "");
           return;
         }
         // Old-reddit expando button → toggle the post's inline media/text.
