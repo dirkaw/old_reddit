@@ -14,7 +14,7 @@ await page.addScriptTag({ content: "globalThis.chrome = { runtime: { getURL: (p)
 for (const f of ["common.js", "rebuild.js"]) await page.addScriptTag({ content: fs.readFileSync(path.join(repo, f), "utf8") });
 let fail = 0;
 const check = (name, ok, info) => { console.log((ok ? "PASS " : "FAIL ") + name + (info ? "  " + info : "")); if (!ok) fail++; };
-for (const f of files.filter((x) => !/right_rail/.test(path.basename(x)))) {
+for (const f of files.filter((x) => !/right_rail|hover_card/.test(path.basename(x)))) {
   const html = fs.readFileSync(f, "utf8");
   const r = await page.evaluate((html) => {
     const R = globalThis.ORR_REBUILD;
@@ -69,7 +69,8 @@ const extra = await page.evaluate(() => {
 });
 check("cleanMd spoiler-text → md-spoiler-text, drops screen-reader text", /<span class="md-spoiler-text">secret<\/span>/.test(extra.normal) && !/hidden/.test(extra.normal) && /<h2>Rule<\/h2>/.test(extra.normal), extra.normal);
 check("cleanMd headingsAsStrong", /<strong>Rule<\/strong>/.test(extra.side), extra.side);
-// Optional fixtures, matched by file name: *right_rail* (sidebar), *_r_<sub>_.html (stickies), *type-video* (muxed MP4)
+// Optional fixtures, matched by file name: *right_rail* (sidebar), *_r_<sub>_.html (stickies), *type-video* (muxed MP4),
+// *hover_card* (logged-out hover cards; "doesnotexist" in the name = expect null)
 for (const f of files) {
   const html = fs.readFileSync(f, "utf8");
   const base = path.basename(f);
@@ -88,6 +89,13 @@ for (const f of files) {
     const s = await page.evaluate((html) => { const R = globalThis.ORR_REBUILD; return R.stickiesFromHtml(R.parseHtmlDoc(html)).map((d) => ({ name: d.name, title: d.title.slice(0, 40), score: d.score, n: d.num_comments, sticky: d.stickied, item: R.buildItem(d, {}).includes("stickied-tagline") })); }, html);
     console.log("\n== " + base + " stickies " + JSON.stringify(s));
     check("stickies parse + render as announcements", s.every((d) => /^t3_/.test(d.name) && d.title && d.sticky && d.item));
+  }
+  if (/hover_card/.test(base)) {
+    const h = await page.evaluate(([html, isUser]) => { const R = globalThis.ORR_REBUILD; const doc = R.parseHtmlDoc(html); return isUser ? R.userHoverFromHtml(doc) : R.subHoverFromHtml(doc); }, [html, /user_hover_card/.test(base)]);
+    console.log("\n== " + base + " hover " + JSON.stringify(h));
+    if (/doesnotexist/.test(base)) check("hover card: missing user/sub → null", h === null);
+    else if (/user_hover_card/.test(base)) check("user hover card: karma + cake day", !!h && h.postKarma > 0 && h.commentKarma > 0 && h.created > 1e9 && !!h.name);
+    else check("sub hover card: weekly visitors + description", !!h && h.weeklyVisitors > 0 && h.weeklyContributions > 0 && h.description.length > 5 && !!h.name);
   }
   if (/type-video/.test(base)) {
     const v = await page.evaluate((html) => {

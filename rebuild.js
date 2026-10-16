@@ -1054,7 +1054,7 @@
     meIdentity, userbarLoggedIn, userbarLoggedOut, srBarHtml, searchFormHtml, sideSearchHtml, buildHeader,
     searchJsonUrl, searchHref, buildSearchPage, buildWikiPage,
     parseHtmlDoc, cleanMd, isoToUtc, postFromShreddit, commentsFromHtml, htmlListingPath,
-    packagedMp4, stickiesFromHtml, railFromHtml, buildRailSidebar, buildAgeGate,
+    packagedMp4, stickiesFromHtml, railFromHtml, buildRailSidebar, buildAgeGate, userHoverFromHtml, subHoverFromHtml, parseCount,
   };
 
   // ---------- runtime driver -------------------------------------------
@@ -1357,10 +1357,14 @@ a.expand { color:#888; text-decoration:none; font-family:monospace; cursor:point
 #orr-mute-all.show { display:block; }
 .orr-usertag { display:inline-block; padding:0 4px; margin:0 2px; border-radius:3px; font-size:10px; line-height:normal; color:#fff; vertical-align:baseline; }
 /* quick filter/tag actions next to a tagline's author / "to r/sub" link (styled like "locked") */
-a.orr-qa { margin-left:5px; color:#888; text-decoration:none; white-space:nowrap; cursor:pointer; }
-a.orr-qa:hover { color:#555; text-decoration:underline; }
+a.orr-qa { margin-left:5px; color:#999; text-decoration:none; white-space:nowrap; cursor:pointer; opacity:0; transition:opacity .1s; }
+/* only while hovering/focusing that post or comment, so taglines stay as plain as old reddit's
+   (opacity, not visibility: the space is kept so nothing shifts, and the icons stay keyboard-focusable) */
+.thing.link:hover a.orr-qa, .thing.comment > .entry:hover a.orr-qa, .tagline:focus-within a.orr-qa { opacity:1; }
+@media (hover: none) { a.orr-qa { opacity:1; } }
+a.orr-qa:hover { color:#555; }
+a.orr-qa[data-qa="filter"]:hover { color:#d93025; }
 a.orr-qa svg { width:11px; height:11px; vertical-align:-2px; }
-a.orr-qa .orr-qa-icon { font-size:13px; line-height:1; vertical-align:-1px; }
 #orr-toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); z-index:2147483000; max-width:90vw;
   padding:8px 14px; border-radius:4px; background:#333; color:#fff; font:13px verdana,arial,sans-serif; box-shadow:0 2px 10px rgba(0,0,0,.3); }
 #orr-toast a { color:#8cf; font-weight:bold; margin-left:10px; cursor:pointer; }
@@ -2005,8 +2009,9 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     hideHoverCard();
     if (quiet) return;
     const label = (kind === "users" ? "u/" : "r/") + name;
+    const where = document.querySelector(".commentarea") ? " in listings" : ""; // filters don't touch comments
     const msg = nowFiltered
-      ? `${label} is filtered — ${kind === "users" ? "their" : "its"} posts are hidden.`
+      ? `${label} is filtered — ${kind === "users" ? "their" : "its"} posts are hidden${where}.`
       : `${label} is no longer filtered.`;
     showToast(msg, () => toggleFilter(kind, name, true));
   }
@@ -2052,10 +2057,23 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     svg.setAttribute("viewBox", "0 0 16 16");
     svg.setAttribute("aria-hidden", "true");
     const c = document.createElementNS(SVG_NS, "circle");
-    [["cx", "8"], ["cy", "8"], ["r", "6.5"], ["fill", "none"], ["stroke", "#d93025"], ["stroke-width", "2"]].forEach(([k, v]) => c.setAttribute(k, v));
+    [["cx", "8"], ["cy", "8"], ["r", "6.5"], ["fill", "none"], ["stroke", "currentColor"], ["stroke-width", "2"]].forEach(([k, v]) => c.setAttribute(k, v));
     const l = document.createElementNS(SVG_NS, "line");
-    [["x1", "3.4"], ["y1", "3.4"], ["x2", "12.6"], ["y2", "12.6"], ["stroke", "#d93025"], ["stroke-width", "2"]].forEach(([k, v]) => l.setAttribute(k, v));
+    [["x1", "3.4"], ["y1", "3.4"], ["x2", "12.6"], ["y2", "12.6"], ["stroke", "currentColor"], ["stroke-width", "2"]].forEach(([k, v]) => l.setAttribute(k, v));
     svg.append(c, l);
+    return svg;
+  }
+  // A luggage-tag outline (SVG, like blockIcon, so it looks the same on every OS — an
+  // emoji renders differently everywhere).
+  function tagIcon() {
+    const svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("viewBox", "0 0 16 16");
+    svg.setAttribute("aria-hidden", "true");
+    const p = document.createElementNS(SVG_NS, "path");
+    [["d", "M1.5 2.5v5l7 7 6-6-7-7h-5z"], ["fill", "none"], ["stroke", "currentColor"], ["stroke-width", "1.6"], ["stroke-linejoin", "round"]].forEach(([k, v]) => p.setAttribute(k, v));
+    const h = document.createElementNS(SVG_NS, "circle");
+    [["cx", "5"], ["cy", "6"], ["r", "1.3"], ["fill", "currentColor"]].forEach(([k, v]) => h.setAttribute(k, v));
+    svg.append(p, h);
     return svg;
   }
   function qaTitle(action, kind, name) {
@@ -2076,14 +2094,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     a.dataset.qaName = name;
     a.title = qaTitle(action, kind, name);
     a.setAttribute("aria-label", a.title);
-    if (action === "filter") a.appendChild(blockIcon());
-    else {
-      const i = document.createElement("span");
-      i.className = "orr-qa-icon";
-      i.setAttribute("aria-hidden", "true");
-      i.textContent = "\u{1F3F7}\uFE0F";
-      a.appendChild(i);
-    }
+    a.appendChild(action === "filter" ? blockIcon() : tagIcon());
     return a;
   }
   // After a filter toggle, update the tooltip on every filter icon for that name.
@@ -2115,7 +2126,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         if (filterable && name.toLowerCase() !== profileUser) out.push(qaLink("filter", "users", name));
         out.push(qaLink("tag", "users", name));
       }
-      let at = a;
+      let at = a.nextElementSibling && a.nextElementSibling.classList.contains("orr-usertag") ? a.nextElementSibling : a;
       out.forEach((el) => { at.insertAdjacentElement("afterend", el); at = el; });
     });
   }
@@ -2557,30 +2568,36 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     const url = um
       ? location.origin + "/user/" + um[1] + "/about.json?raw_json=1"
       : location.origin + "/r/" + sm[1] + "/about.json?raw_json=1";
-    // Logged out, about.json is blocked: show what's still available (a sub's
-    // sidebar header) plus the actions, rather than no card at all.
+    // Logged out, about.json is blocked: Reddit's own small hover-card partials carry
+    // the same basics (see hoverPartial); failing that, show the name + actions.
     const j = jsonBlocked ? null : await fetchJsonCached(url);
-    const d = j && j.data;
+    let d = j && j.data;
     if (!d && !jsonBlocked) return;
+    if (!d) {
+      const h = await hoverPartial(um ? "user" : "sub", um ? um[1] : sm[1]);
+      if (h && um) d = { name: h.name, link_karma: h.postKarma, comment_karma: h.commentKarma, created_utc: h.created };
+      else if (h) d = { display_name: h.name, public_description: h.description, orr_weekly: h.weeklyVisitors };
+    }
     let html;
     if (um) {
       const name = (d && d.name) || um[1];
       const stats = d
-        ? `<br>${formatNumber(d.link_karma)} post &middot; ${formatNumber(d.comment_karma)} comment karma` +
-          `<br>cake day ${esc(d.created_utc ? new Date(d.created_utc * 1000).toISOString().slice(0, 10) : "?")}`
+        ? (d.link_karma != null || d.comment_karma != null ? `<br>${formatNumber(d.link_karma)} post &middot; ${formatNumber(d.comment_karma)} comment karma` : "") +
+          (d.created_utc ? `<br>cake day ${esc(new Date(d.created_utc * 1000).toISOString().slice(0, 10))}` : "")
         : "";
       html =
         `<b>u/${esc(name)}</b>${stats}` +
         `<br><span class="orr-tagbtn" data-tag-user="${esc(name)}">tag user</span>` +
         ` &middot; <span class="orr-filterbtn" data-filter-kind="users" data-filter-name="${esc(name)}">${isFiltered("users", name) ? "un-filter user" : "filter user"}</span>`;
     } else {
-      const rail = d ? null : await fetchRail(sm[1]);
+      const rail = d ? null : await fetchRail(sm[1]); // last resort (heavier partial)
       const subName = (d && d.display_name) || (rail && rail.name) || sm[1];
       const subKey = subName.toLowerCase();
       const isFav = (dataCache.favoriteSubs || []).some((s) => s && s.toLowerCase() === subKey);
-      const count = d ? `${formatNumber(d.subscribers)} subscribers`
-        : rail && rail.weeklyVisitors != null ? `${formatNumber(rail.weeklyVisitors)} weekly visitors` : "";
-      const desc = (d ? d.public_description : rail && rail.description) || "";
+      const visitors = d && d.orr_weekly != null ? d.orr_weekly : rail ? rail.weeklyVisitors : null;
+      const count = d && d.subscribers != null ? `${formatNumber(d.subscribers)} subscribers`
+        : visitors != null ? `${formatNumber(visitors)} weekly visitors` : "";
+      const desc = (d && d.public_description) || (rail && rail.description) || "";
       html =
         `<b>r/${esc(subName)}</b>` + (count ? `<br>${count}` : "") +
         (desc ? `<br>${esc(desc.slice(0, 240))}` : "") +
@@ -2592,6 +2609,61 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     positionCard(card, anchor);
     card.style.display = "block";
   }
+  // Reddit's hover-card partials (~5-8 KB; work logged out). Values are read by their
+  // visible labels ("Post karma", "Weekly visitors"…), the least fragile hook in them.
+  function parseCount(t) {
+    const m = /([\d.,]+)\s*([km])?/i.exec(String(t || ""));
+    if (!m) return null;
+    const n = parseFloat(m[1].replace(/,/g, ""));
+    if (isNaN(n)) return null;
+    return Math.round(n * (/k/i.test(m[2] || "") ? 1e3 : /m/i.test(m[2] || "") ? 1e6 : 1));
+  }
+  function labeledCount(doc, label) {
+    const want = label.toLowerCase();
+    for (const el of doc.querySelectorAll("div, span")) {
+      if (el.children.length || el.textContent.trim().toLowerCase() !== want) continue;
+      // the number sits in a sibling (or a sibling's child) of the label, a level or two up
+      for (let p = el.parentElement, i = 0; p && i < 3; p = p.parentElement, i++) {
+        const fn = p.querySelector("faceplate-number[number]");
+        if (fn) return parseCount(fn.getAttribute("number"));
+        const s = Array.from(p.querySelectorAll("span")).find((x) => !x.children.length && /^[\d.,]+\s*[km]?$/i.test(x.textContent.trim()));
+        if (s) return parseCount(s.textContent);
+      }
+    }
+    return null;
+  }
+  function userHoverFromHtml(doc) {
+    const post = labeledCount(doc, "Post karma"), comment = labeledCount(doc, "Comment karma");
+    if (post == null && comment == null) return null; // not a (visible) user
+    const a = doc.querySelector("a[href^='/user/']");
+    const m = a && /^\/user\/([^/?#]+)/.exec(a.getAttribute("href"));
+    const t = doc.querySelector("time[datetime]");
+    const ms = t ? Date.parse(t.getAttribute("datetime")) : NaN;
+    return { name: m ? m[1] : "", postKarma: post, commentKarma: comment, created: isNaN(ms) ? 0 : ms / 1000 };
+  }
+  function subHoverFromHtml(doc) {
+    const visitors = labeledCount(doc, "Weekly visitors");
+    if (visitors == null) return null; // not a (visible) subreddit
+    const a = doc.querySelector("a[href^='/r/']");
+    const m = a && /^\/r\/([^/?#]+)/.exec(a.getAttribute("href"));
+    const p = Array.from(doc.querySelectorAll("p")).find((x) => !x.closest("rpl-hovercard, article") && x.textContent.trim());
+    return { name: m ? m[1] : "", description: p ? p.textContent.replace(/\s+/g, " ").trim() : "", weeklyVisitors: visitors, weeklyContributions: labeledCount(doc, "Weekly contributions") };
+  }
+  async function hoverPartial(kind, name) {
+    const key = "hover:" + kind + ":" + String(name).toLowerCase();
+    const hit = aboutCache.get(key);
+    if (hit && Date.now() - hit.t < ABOUT_TTL) return hit.v;
+    let v = null;
+    try {
+      const doc = await fetchHtmlDoc((kind === "user" ? "/svc/shreddit/user-hover-card/" : "/svc/shreddit/community-hover-card/") + encodeURIComponent(name));
+      v = kind === "user" ? userHoverFromHtml(doc) : subHoverFromHtml(doc);
+    } catch (e) {
+      /* no data → name-only card */
+    }
+    aboutCache.set(key, { v, t: Date.now() });
+    return v;
+  }
+
   function fetchJsonCached(url) {
     if (enhanceCache.has(url)) return enhanceCache.get(url);
     const p = redditFetch(url)
